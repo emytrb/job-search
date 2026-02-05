@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Job Searcher is an automated job search system that scrapes job boards, filters listings using deterministic rules and LLM analysis, scores matches against user preferences, and delivers daily email digests. The system is designed for UK-based job seekers requiring visa sponsorship.
+Job Analyzer is an AI-powered job analysis tool that helps job seekers evaluate job postings against their CV. Users manually paste job descriptions, and the system analyzes eligibility, generates match scores, provides resume suggestions, identifies ATS keywords, and generates tailored cover letters. The system includes daily email digests of analyzed jobs.
 
 ## Online Repository
 
@@ -51,19 +51,13 @@ npm run lint     # ESLint
 
 ```bash
 cd backend
-# Scraping worker (routes through VPN proxy)
-celery -A workers.celery_app worker -Q scraping -c 2 --loglevel=info
-
-# Processing worker (hard filters)
-celery -A workers.celery_app worker -Q processing -c 4 --loglevel=info
-
-# LLM worker (must be -c 1 for Ollama)
+# LLM worker (processes job analyses, must be -c 1 for rate limiting)
 celery -A workers.celery_app worker -Q llm -c 1 --loglevel=info
 
-# Digest worker
+# Digest worker (sends email digests)
 celery -A workers.celery_app worker -Q digest -c 1 --loglevel=info
 
-# Beat scheduler (triggers periodic scrapes)
+# Beat scheduler (triggers periodic digest)
 celery -A workers.celery_app beat --loglevel=info
 ```
 
@@ -72,48 +66,60 @@ celery -A workers.celery_app beat --loglevel=info
 ### Processing Pipeline
 
 ```
-Scrapers → DB → Hard Filter → LLM Analysis → Scoring → Frontend/Digest
-            ↓
-      Celery Workers (4 specialized queues)
+User Input → Analysis Queue → LLM Analysis → SavedAnalysis → Frontend/Digest
+                   ↓
+            Celery Workers (2 queues: llm, digest)
 ```
 
-1. **Scraping** (`backend/scrapers/`): Playwright-based browser automation with rate limiting and VPN proxy support. Scrapers extend `BaseScraper` and implement `scrape_job_urls()` and `scrape_job_details()`.
-
-2. **Hard Filtering** (`backend/app/services/hard_filter.py`): Regex-based rules eliminate ~80% of jobs before LLM. Checks: location (London/UK), job type (permanent only), sponsorship patterns, security clearance, experience requirements.
-
-3. **LLM Analysis** (`backend/llm/client.py`): Uses LiteLLM to call local Ollama. Extracts seniority, tech stack, remote policy, sponsorship likelihood. Single-threaded worker to avoid overwhelming Ollama.
-
-4. **Scoring** (`backend/app/services/scoring.py`): Weighted composite score with configurable weights: stack match (35%), seniority match (25%), sponsorship likelihood (25%), job quality (15%).
+1. **Job Input**: User pastes job description and URL on the Analyzer page
+2. **Queue Processing**: Jobs are queued and processed sequentially with automatic retry on failure
+3. **LLM Analysis** (`backend/llm/client.py`): Uses LiteLLM with Groq cloud API. Performs 4-step analysis:
+   - Eligibility check (early exit if not eligible)
+   - Matching score and job summary
+   - Resume analysis and ATS keywords
+   - Cover letter generation
+4. **Results Storage**: Analysis saved to `SavedAnalysis` model for later viewing
 
 ### Key Components
 
 - **API**: FastAPI async app at `backend/app/main.py`, routes in `backend/app/api/v1/`
-- **Models**: SQLAlchemy ORM in `backend/app/models/` (Job, LLMAnalysis, JobScore, UserPreferences, ScrapeSource, etc.)
-- **Workers**: Celery tasks in `backend/workers/tasks/` with 4 queues: scraping, processing, llm, digest
-- **Frontend**: Next.js app in `frontend/src/app/` with pages for jobs, digest, settings, sources
+- **Models**: SQLAlchemy ORM in `backend/app/models/` (SavedAnalysis, AnalysisQueueItem, UserPreferences, Digest)
+- **Workers**: Celery tasks in `backend/workers/tasks/` with 2 queues: llm, digest
+- **Frontend**: Next.js app in `frontend/src/app/` with pages for analyzer (home), analyzed-jobs, digest, settings
+- **LLM Prompts**: `backend/llm/prompts/job_analyzer.py` contains all analysis prompts
 
 ### Infrastructure
 
 - PostgreSQL (async via asyncpg)
-- Redis (Celery broker + cache)
-- Ollama (local LLM, model: B-A-M-N/vibethinker:1.5b)
-- VPN container (gluetun) for scraper IP protection
+- Redis (Celery broker)
+- Groq Cloud API (LLM provider, uses `openai/gpt-oss-120b` model)
 - Nginx reverse proxy
+
+### Rate Limiting
+
+The LLM client handles Groq's rate limits automatically:
+- Catches 429 responses and reads the `retry-after` header
+- Waits the exact time specified before retrying
+- Falls back to exponential backoff if header unavailable
+- Supports up to 10 retries per request
 
 ### Celery Beat Schedule
 
-- Low-risk sources (Greenhouse, Lever): every 6 hours
-- Medium-risk sources (WTTJ): every 12 hours
-- High-risk sources (Indeed): daily at 3 AM UTC
 - Daily digest: 8 AM UTC
 
 ## API Endpoints
 
-- `GET/POST /api/v1/jobs` - List and manage jobs
-- `GET/POST /api/v1/sources` - Manage scrape sources
-- `POST /api/v1/sources/{id}/scrape` - Trigger manual scrape
-- `GET/PUT /api/v1/preferences` - User preferences
-- `GET /api/v1/digest` - Digest history
+- `POST /api/v1/analyzer/analyze` - Add job to analysis queue
+- `GET /api/v1/analyzer/queue` - Get queue status
+- `DELETE /api/v1/analyzer/queue/{id}` - Remove from queue
+- `GET /api/v1/analyzer/saved` - List saved analyses
+- `GET /api/v1/analyzer/saved/{id}` - Get analysis details
+- `DELETE /api/v1/analyzer/saved/{id}` - Delete analysis
+- `POST /api/v1/analyzer/requeue` - Requeue analyses for re-analysis
+- `GET/PUT /api/v1/preferences` - User preferences (CV, guidelines)
+- `GET /api/v1/digest/preview` - Preview next digest
+- `POST /api/v1/digest/send` - Trigger digest email
+- `GET /api/v1/digest/history` - List sent digests
 
 ## Environment Variables
 
@@ -121,13 +127,15 @@ Copy `.env.example` to `.env`. Key variables:
 
 - `DATABASE_URL` - PostgreSQL connection string
 - `REDIS_URL` - Redis connection string
-- `OLLAMA_BASE_URL`, `OLLAMA_MODEL` - LLM configuration
+- `LLM_PROVIDER` - LLM provider (default: groq)
+- `LLM_MODEL` - Model name (default: openai/gpt-oss-120b)
+- `GROQ_API_KEY` - Groq API key (required)
 - `SMTP_*`, `EMAIL_*` - Email digest settings
-- `VPN_*` - VPN provider configuration for gluetun
 
-## Adding New Scrapers
+## Frontend Pages
 
-1. Create new file in `backend/scrapers/` extending `BaseScraper`
-2. Implement `get_job_listings_url()`, `scrape_job_urls()`, `scrape_job_details()`
-3. Use `self.rate_limiter` and `self.fetch_with_rate_limit()` for all requests
-4. Register in appropriate risk level (affects scrape frequency)
+- `/` - Job Analyzer (paste job description, view analysis)
+- `/analyzed-jobs` - List of all analyzed jobs with select mode for requeue
+- `/analyzed-jobs/{id}` - Detailed view of a single analysis
+- `/digest` - Preview and send email digests
+- `/settings` - Configure CV, guidelines, and preferences

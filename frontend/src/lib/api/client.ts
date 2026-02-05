@@ -18,62 +18,6 @@ function getApiBase(): string {
 
 const API_BASE = getApiBase()
 
-export interface Job {
-  id: number
-  title: string
-  company_name: string
-  location: string | null
-  job_type: string
-  url: string | null
-  salary_min: number | null
-  salary_max: number | null
-  salary_currency: string | null
-  status: string
-  created_at: string
-}
-
-export interface JobScore {
-  stack_match_score: number
-  seniority_match_score: number
-  sponsorship_score: number
-  quality_score: number
-  total_score: number
-  stack_match_details: number
-}
-
-export interface LLMAnalysis {
-  seniority_level: string | null
-  detected_stack: string[]
-  required_experience_years: number | null
-  sponsorship_likelihood: number | null
-  remote_policy: string | null
-}
-
-export interface JobDetail {
-  job: Job
-  analysis: LLMAnalysis | null
-  score: JobScore | null
-}
-
-export interface JobListResponse {
-  jobs: Job[]
-  total: number
-  limit: number
-  offset: number
-}
-
-export interface ScrapeSource {
-  id: number
-  name: string
-  source_type: string
-  base_url: string
-  risk_level: string
-  config: Record<string, unknown>
-  enabled: boolean
-  last_scraped_at: string | null
-  created_at: string
-}
-
 export interface UserPreferences {
   id: number
   cv_text: string
@@ -218,32 +162,6 @@ async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise
 }
 
 export const api = {
-  jobs: {
-    list: (params?: { status?: string; min_score?: number; limit?: number; offset?: number }) => {
-      const searchParams = new URLSearchParams()
-      if (params?.status) searchParams.set("status", params.status)
-      if (params?.min_score) searchParams.set("min_score", params.min_score.toString())
-      if (params?.limit) searchParams.set("limit", params.limit.toString())
-      if (params?.offset) searchParams.set("offset", params.offset.toString())
-      const query = searchParams.toString()
-      return fetchApi<JobListResponse>(`/jobs${query ? `?${query}` : ""}`)
-    },
-    get: (id: number) => fetchApi<JobDetail>(`/jobs/${id}`),
-    dismiss: (id: number) => fetchApi<{ status: string }>(`/jobs/${id}/dismiss`, { method: "POST" }),
-    apply: (id: number) => fetchApi<{ status: string }>(`/jobs/${id}/apply`, { method: "POST" }),
-  },
-
-  sources: {
-    list: () => fetchApi<ScrapeSource[]>("/sources"),
-    get: (id: number) => fetchApi<ScrapeSource>(`/sources/${id}`),
-    create: (data: Partial<ScrapeSource>) =>
-      fetchApi<ScrapeSource>("/sources", { method: "POST", body: JSON.stringify(data) }),
-    update: (id: number, data: Partial<ScrapeSource>) =>
-      fetchApi<ScrapeSource>(`/sources/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-    delete: (id: number) => fetchApi<{ status: string }>(`/sources/${id}`, { method: "DELETE" }),
-    scrape: (id: number) => fetchApi<{ status: string; task_id: string }>(`/sources/${id}/scrape`, { method: "POST" }),
-  },
-
   digest: {
     preview: () => fetchApi<DigestPreview>("/digest/preview"),
     send: () => fetchApi<{ status: string; task_id: string }>("/digest/send", { method: "POST" }),

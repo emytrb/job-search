@@ -4,14 +4,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from workers.celery_app import celery_app
 from app.core.config import settings
-from app.models.job import Job, JobStatus
-from app.models.job_score import JobScore
-from app.models.llm_analysis import LLMAnalysis
+from app.models.saved_analysis import SavedAnalysis
 from app.models.user_preferences import UserPreferences
 from app.models.digest import Digest
 from mailer.sender import email_sender
@@ -43,42 +41,33 @@ async def _send_daily_digest_async() -> dict:
         if not recipient:
             return {"status": "skipped", "reason": "No recipient configured"}
 
-        jobs_query = (
-            select(Job)
-            .join(JobScore)
-            .where(Job.status == JobStatus.SCORED)
-            .order_by(JobScore.total_score.desc())
+        # Get top analyzed jobs (eligible or partially eligible)
+        analyses_query = (
+            select(SavedAnalysis)
+            .where(SavedAnalysis.eligibility_status.in_(["eligible", "partially_eligible"]))
+            .order_by(desc(SavedAnalysis.matching_score))
             .limit(settings.digest_max_jobs)
         )
-        jobs_result = await db.execute(jobs_query)
-        jobs = jobs_result.scalars().all()
+        analyses_result = await db.execute(analyses_query)
+        analyses = analyses_result.scalars().all()
 
-        if not jobs:
-            return {"status": "skipped", "reason": "No jobs to send"}
+        if not analyses:
+            return {"status": "skipped", "reason": "No analyzed jobs to send"}
 
         job_data = []
         job_ids = []
 
-        for job in jobs:
-            analysis_query = select(LLMAnalysis).where(LLMAnalysis.job_id == job.id)
-            analysis_result = await db.execute(analysis_query)
-            analysis = analysis_result.scalar_one_or_none()
-
-            score_query = select(JobScore).where(JobScore.job_id == job.id)
-            score_result = await db.execute(score_query)
-            score = score_result.scalar_one_or_none()
-
+        for analysis in analyses:
             job_data.append({
-                "id": job.id,
-                "title": job.title,
-                "company_name": job.company_name,
-                "location": job.location,
-                "url": job.url,
-                "score": score.total_score if score else 0,
-                "seniority": analysis.seniority_level if analysis else None,
-                "stack": analysis.detected_stack if analysis else [],
+                "id": analysis.id,
+                "title": analysis.job_title,
+                "company_name": analysis.company_name,
+                "url": analysis.job_url,
+                "score": analysis.matching_score,
+                "eligibility": analysis.eligibility_status,
+                "key_requirements": analysis.key_requirements[:3] if analysis.key_requirements else [],
             })
-            job_ids.append(job.id)
+            job_ids.append(analysis.id)
 
         template = jinja_env.get_template("digest.html")
         html_content = template.render(
@@ -88,7 +77,7 @@ async def _send_daily_digest_async() -> dict:
             dashboard_url="http://localhost:3000",
         )
 
-        subject = f"Daily Job Digest - {len(job_data)} new opportunities"
+        subject = f"Daily Job Digest - {len(job_data)} analyzed opportunities"
 
         try:
             await email_sender.send_email(

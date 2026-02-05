@@ -23,20 +23,14 @@ export default function RootLayout({
               <div className="flex justify-between h-16">
                 <div className="flex items-center">
                   <a href="/" className="text-xl font-bold text-blue-600">
-                    Job Searcher
+                    Job Analyzer
                   </a>
                   <div className="hidden md:flex ml-10 space-x-8">
                     <a href="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium">
-                      Jobs
-                    </a>
-                    <a href="/analyzer" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium">
                       Analyzer
                     </a>
                     <a href="/analyzed-jobs" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium">
                       Analyzed Jobs
-                    </a>
-                    <a href="/sources" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium">
-                      Sources
                     </a>
                     <a href="/digest" className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium">
                       Digest

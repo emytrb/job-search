@@ -11,7 +11,6 @@ from litellm.exceptions import RateLimitError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from llm.prompts.classification import CLASSIFICATION_PROMPT
 from llm.prompts.job_analyzer import (
     ATS_GUIDELINES_SECTION,
     COVER_LETTER_GUIDELINES_SECTION,
@@ -26,20 +25,6 @@ from llm.prompts.job_analyzer import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class JobAnalysis:
-    seniority_level: str
-    detected_stack: list[str]
-    required_experience_years: Optional[int]
-    sponsorship_likelihood: float
-    remote_policy: str
-    key_responsibilities: list[str]
-    nice_to_haves: list[str]
-    raw_response: dict
-    model_used: str
-    processing_time_ms: int
 
 
 @dataclass
@@ -218,47 +203,6 @@ class LLMClient:
 
                 await asyncio.sleep(retry_after)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-    )
-    async def analyze_job(self, title: str, description: str) -> JobAnalysis:
-        start_time = time.time()
-
-        prompt = CLASSIFICATION_PROMPT.format(
-            title=title,
-            description=description[:8000],
-        )
-
-        try:
-            response = await self._rate_limited_completion(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=1024,
-            )
-
-            content = response.choices[0].message.content
-            parsed = self._parse_response(content)
-
-            processing_time = int((time.time() - start_time) * 1000)
-
-            return JobAnalysis(
-                seniority_level=parsed.get("seniority_level", "unknown"),
-                detected_stack=parsed.get("detected_stack", []),
-                required_experience_years=parsed.get("required_experience_years"),
-                sponsorship_likelihood=parsed.get("sponsorship_likelihood", 0.5),
-                remote_policy=parsed.get("remote_policy", "unknown"),
-                key_responsibilities=parsed.get("key_responsibilities", []),
-                nice_to_haves=parsed.get("nice_to_haves", []),
-                raw_response=parsed,
-                model_used=self.model,
-                processing_time_ms=processing_time,
-            )
-
-        except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
-            raise
-
     def _parse_response(self, content: str) -> dict:
         try:
             json_match = content
@@ -327,35 +271,9 @@ class LLMClient:
             return None
 
     def _fallback_parse(self, content: str) -> dict:
-        result = {
-            "seniority_level": "unknown",
-            "detected_stack": [],
-            "required_experience_years": None,
-            "sponsorship_likelihood": 0.5,
-            "remote_policy": "unknown",
-            "key_responsibilities": [],
-            "nice_to_haves": [],
-        }
-
-        content_lower = content.lower()
-
-        if "junior" in content_lower:
-            result["seniority_level"] = "junior"
-        elif "senior" in content_lower:
-            result["seniority_level"] = "senior"
-        elif "staff" in content_lower:
-            result["seniority_level"] = "staff"
-        elif "mid" in content_lower:
-            result["seniority_level"] = "mid"
-
-        if "remote" in content_lower:
-            result["remote_policy"] = "remote"
-        elif "hybrid" in content_lower:
-            result["remote_policy"] = "hybrid"
-        elif "onsite" in content_lower or "office" in content_lower:
-            result["remote_policy"] = "onsite"
-
-        return result
+        """Return empty dict as last resort when JSON parsing fails."""
+        logger.warning("Returning empty dict as fallback parse result")
+        return {}
 
     async def _analyze_eligibility(
         self,
