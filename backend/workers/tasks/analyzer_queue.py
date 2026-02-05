@@ -156,11 +156,50 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
 
         except Exception as e:
             logger.error(f"Analysis failed for queue item {queue_item_id}: {e}")
-            queue_item.status = QueueItemStatus.FAILED.value
-            queue_item.error_message = str(e)
-            queue_item.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-            return {"error": str(e)}
+
+            # Check if we can retry
+            if queue_item.retry_count < queue_item.max_retries:
+                queue_item.retry_count += 1
+                queue_item.status = QueueItemStatus.PENDING.value
+                queue_item.error_message = f"Retry {queue_item.retry_count}/{queue_item.max_retries}: {str(e)}"
+                queue_item.started_at = None
+                queue_item.completed_at = None
+                await db.commit()
+
+                logger.info(
+                    f"Queue item {queue_item_id} scheduled for retry "
+                    f"({queue_item.retry_count}/{queue_item.max_retries})"
+                )
+
+                # Schedule retry with exponential backoff
+                base_delay = settings.queue_retry_base_delay
+                delay_seconds = base_delay * (2 ** (queue_item.retry_count - 1))
+                process_queue_item.apply_async(
+                    args=[queue_item_id],
+                    countdown=delay_seconds,
+                )
+
+                return {
+                    "queue_item_id": queue_item_id,
+                    "status": "retry_scheduled",
+                    "retry_count": queue_item.retry_count,
+                    "max_retries": queue_item.max_retries,
+                    "retry_delay_seconds": delay_seconds,
+                    "error": str(e),
+                }
+            else:
+                # Max retries reached, mark as failed
+                queue_item.status = QueueItemStatus.FAILED.value
+                queue_item.error_message = f"Failed after {queue_item.max_retries} retries: {str(e)}"
+                queue_item.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+                logger.error(
+                    f"Queue item {queue_item_id} permanently failed after "
+                    f"{queue_item.max_retries} retries"
+                )
+
+                return {"error": str(e), "retries_exhausted": True}
 
 
 @celery_app.task(name="workers.tasks.analyzer_queue.process_queue_item")

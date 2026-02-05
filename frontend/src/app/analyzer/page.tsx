@@ -334,7 +334,10 @@ export default function AnalyzerPage() {
                   {item.status === "failed" && (
                     <XCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
                   )}
-                  {item.status === "pending" && (
+                  {item.status === "pending" && item.retry_count > 0 && (
+                    <RefreshCw className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                  )}
+                  {item.status === "pending" && item.retry_count === 0 && (
                     <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
                   <div className="min-w-0 flex-1">
@@ -350,8 +353,20 @@ export default function AnalyzerPage() {
                     {item.status === "processing" && (
                       <p className="text-xs text-blue-600">Analyzing...</p>
                     )}
+                    {item.status === "pending" && item.retry_count > 0 && (
+                      <p className="text-xs text-orange-600">
+                        Retry {item.retry_count}/{item.max_retries} pending...
+                      </p>
+                    )}
                     {item.status === "failed" && (
-                      <p className="text-xs text-red-600">{item.error_message}</p>
+                      <p className="text-xs text-red-600">
+                        {item.error_message}
+                        {item.retry_count >= item.max_retries && (
+                          <span className="ml-1 text-gray-500">
+                            (after {item.retry_count} retries)
+                          </span>
+                        )}
+                      </p>
                     )}
                     {item.status === "completed" && item.matching_score !== null && (
                       <p className="text-xs text-green-600">

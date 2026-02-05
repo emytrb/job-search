@@ -82,6 +82,8 @@ class QueueItemResponse(BaseModel):
     job_url: str
     status: str  # pending, processing, completed, failed
     error_message: Optional[str] = None
+    retry_count: int = 0
+    max_retries: int = 3
     saved_analysis_id: Optional[int] = None
     job_title: Optional[str] = None  # From saved analysis if completed
     company_name: Optional[str] = None  # From saved analysis if completed

@@ -25,6 +25,10 @@ class AnalysisQueueItem(Base):
     status = Column(String(50), default=QueueItemStatus.PENDING.value, nullable=False, index=True)
     error_message = Column(Text, nullable=True)
 
+    # Retry mechanism
+    retry_count = Column(Integer, default=0, nullable=False)
+    max_retries = Column(Integer, default=3, nullable=False)
+
     # Celery task ID for tracking
     celery_task_id = Column(String(255), nullable=True)
 

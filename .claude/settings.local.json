@@ -3,7 +3,8 @@
     "allow": [
       "Bash(alembic revision:*)",
       "Bash(python -m alembic revision:*)",
-      "Bash(docker logs:*)"
+      "Bash(docker logs:*)",
+      "Bash(git add:*)"
     ]
   }
 }

@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     digest_max_jobs: int = 10
     digest_hour_utc: int = 8
 
+    # Queue resilience
+    queue_max_retries: int = 3
+    queue_retry_base_delay: int = 5  # Base delay in seconds (exponential backoff)
+
     class Config:
         env_file = ".env"
         case_sensitive = False

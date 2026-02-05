@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 from sqlalchemy.orm import joinedload
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.user_preferences import UserPreferences
 from app.models.saved_analysis import SavedAnalysis
@@ -34,6 +35,8 @@ def build_queue_item_response(item: AnalysisQueueItem) -> QueueItemResponse:
         job_url=item.job_url,
         status=item.status,
         error_message=item.error_message,
+        retry_count=item.retry_count,
+        max_retries=item.max_retries,
         saved_analysis_id=item.saved_analysis_id,
         job_title=item.saved_analysis.job_title if item.saved_analysis else None,
         company_name=item.saved_analysis.company_name if item.saved_analysis else None,
@@ -66,6 +69,7 @@ async def add_to_queue(
         job_text=request.job_text,
         job_url=request.job_url,
         status=QueueItemStatus.PENDING.value,
+        max_retries=settings.queue_max_retries,
     )
     db.add(queue_item)
     await db.commit()
@@ -232,6 +236,7 @@ async def requeue_analyses(
             job_url=analysis.job_url,
             status=QueueItemStatus.PENDING.value,
             saved_analysis_id=analysis_id,  # Key for overwrite mode
+            max_retries=settings.queue_max_retries,
         )
         db.add(queue_item)
         await db.flush()

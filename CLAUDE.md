@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Job Searcher is an automated job search system that scrapes job boards, filters listings using deterministic rules and LLM analysis, scores matches against user preferences, and delivers daily email digests. The system is designed for UK-based job seekers requiring visa sponsorship.
 
+## Online Repository
+
+The project is hosted on Github on this repository: https://github.com/emytrb/job-search.
+The gh CLI (Github CLI) is correctly configured, you can use the `gh` commands to interact with the github repository.
+When you have completed a significant feature, ask the user if they want you to commit & push.
+
 ## Commands
 
 ### Development
