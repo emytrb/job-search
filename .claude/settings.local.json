@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(alembic revision:*)",
+      "Bash(python -m alembic revision:*)",
+      "Bash(docker logs:*)"
+    ]
+  }
+}
