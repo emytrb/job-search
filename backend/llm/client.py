@@ -3,132 +3,15 @@ import json
 import re
 import time
 import logging
-from collections import deque
 from typing import Optional
 from dataclasses import dataclass
 
 import litellm
+from litellm.exceptions import RateLimitError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from llm.prompts.classification import CLASSIFICATION_PROMPT
-
-
-class RateLimiter:
-    """
-    Sliding window rate limiter for API requests.
-
-    Tracks request timestamps and enforces limits on:
-    - Requests per minute (RPM)
-    - Requests per day (RPD)
-    """
-
-    def __init__(
-        self,
-        requests_per_minute: int = 30,
-        requests_per_day: int = 1000,
-        buffer_percent: float = 0.15,  # 15% buffer to avoid hitting exact limits
-    ):
-        # Apply buffer to stay safely under limits
-        self.rpm_limit = int(requests_per_minute * (1 - buffer_percent))
-        self.rpd_limit = int(requests_per_day * (1 - buffer_percent))
-
-        # Track request timestamps
-        self.minute_requests: deque = deque()  # Timestamps within last minute
-        self.day_requests: deque = deque()  # Timestamps within last day
-
-        self.logger = logging.getLogger(__name__)
-        self.logger.info(
-            f"Rate limiter initialized: {self.rpm_limit} RPM, {self.rpd_limit} RPD "
-            f"(with {buffer_percent*100:.0f}% buffer)"
-        )
-
-    def _clean_old_requests(self, now: float):
-        """Remove requests outside their respective windows."""
-        minute_ago = now - 60
-        day_ago = now - 86400
-
-        # Clean minute window
-        while self.minute_requests and self.minute_requests[0] < minute_ago:
-            self.minute_requests.popleft()
-
-        # Clean day window
-        while self.day_requests and self.day_requests[0] < day_ago:
-            self.day_requests.popleft()
-
-    def get_wait_time(self) -> float:
-        """
-        Calculate how long to wait before the next request can be made.
-        Returns 0 if no wait is needed.
-        """
-        now = time.time()
-        self._clean_old_requests(now)
-
-        wait_time = 0.0
-
-        # Check RPM limit
-        if len(self.minute_requests) >= self.rpm_limit:
-            oldest_minute_request = self.minute_requests[0]
-            wait_for_rpm = (oldest_minute_request + 60) - now
-            if wait_for_rpm > 0:
-                wait_time = max(wait_time, wait_for_rpm)
-                self.logger.info(
-                    f"RPM limit reached ({len(self.minute_requests)}/{self.rpm_limit}), "
-                    f"need to wait {wait_for_rpm:.1f}s"
-                )
-
-        # Check RPD limit
-        if len(self.day_requests) >= self.rpd_limit:
-            oldest_day_request = self.day_requests[0]
-            wait_for_rpd = (oldest_day_request + 86400) - now
-            if wait_for_rpd > 0:
-                wait_time = max(wait_time, wait_for_rpd)
-                self.logger.warning(
-                    f"RPD limit reached ({len(self.day_requests)}/{self.rpd_limit}), "
-                    f"need to wait {wait_for_rpd:.1f}s ({wait_for_rpd/3600:.1f}h)"
-                )
-
-        return wait_time
-
-    def record_request(self):
-        """Record that a request was made."""
-        now = time.time()
-        self.minute_requests.append(now)
-        self.day_requests.append(now)
-
-    async def wait_if_needed(self):
-        """Wait if rate limits would be exceeded, then record the request."""
-        wait_time = self.get_wait_time()
-
-        if wait_time > 0:
-            self.logger.info(f"Rate limiting: waiting {wait_time:.1f}s before next request")
-            await asyncio.sleep(wait_time)
-            # Recheck after waiting (in case timing shifted)
-            additional_wait = self.get_wait_time()
-            if additional_wait > 0:
-                await asyncio.sleep(additional_wait)
-
-        self.record_request()
-
-    def get_status(self) -> dict:
-        """Get current rate limit status."""
-        now = time.time()
-        self._clean_old_requests(now)
-        return {
-            "requests_last_minute": len(self.minute_requests),
-            "requests_last_day": len(self.day_requests),
-            "rpm_limit": self.rpm_limit,
-            "rpd_limit": self.rpd_limit,
-            "rpm_remaining": max(0, self.rpm_limit - len(self.minute_requests)),
-            "rpd_remaining": max(0, self.rpd_limit - len(self.day_requests)),
-        }
-
-
-# Global rate limiter instance (shared across all LLM calls in this worker)
-rate_limiter = RateLimiter(
-    requests_per_minute=30,  # Groq free tier limit
-    requests_per_day=1000,   # Groq free tier limit
-)
 from llm.prompts.job_analyzer import (
     ATS_GUIDELINES_SECTION,
     COVER_LETTER_GUIDELINES_SECTION,
@@ -241,6 +124,11 @@ class LLMClient:
             self.model = f"{self.provider}/{settings.llm_model}"
             self.base_url = None
 
+        # Maximum retries when hitting rate limits (429)
+        self.max_rate_limit_retries = 10
+        # Default wait time if retry-after header is missing
+        self.default_retry_wait = 5
+
         logger.info(f"LLM client initialized with provider={self.provider}, model={self.model}")
 
     def _get_completion_kwargs(self, **kwargs):
@@ -252,18 +140,83 @@ class LLMClient:
             completion_kwargs["api_key"] = self.api_key
         return completion_kwargs
 
-    async def _rate_limited_completion(self, **kwargs):
-        """Make a rate-limited completion request."""
-        # Only apply rate limiting for cloud providers (not Ollama)
-        if self.provider != "ollama":
-            await rate_limiter.wait_if_needed()
-            status = rate_limiter.get_status()
-            logger.debug(
-                f"Rate limit status: {status['requests_last_minute']}/{status['rpm_limit']} RPM, "
-                f"{status['requests_last_day']}/{status['rpd_limit']} RPD"
-            )
+    def _parse_retry_after(self, error: RateLimitError) -> Optional[float]:
+        """
+        Parse the retry-after header from a rate limit error.
 
-        return await litellm.acompletion(**self._get_completion_kwargs(**kwargs))
+        Groq returns headers like:
+        - retry-after: 2  (seconds to wait)
+        - x-ratelimit-remaining-requests: 14370
+        - x-ratelimit-remaining-tokens: 17997
+        """
+        try:
+            # LiteLLM exposes response headers in llm_provider_response_headers
+            if hasattr(error, 'llm_provider_response_headers') and error.llm_provider_response_headers:
+                headers = error.llm_provider_response_headers
+                retry_after = headers.get('retry-after') or headers.get('Retry-After')
+                if retry_after:
+                    logger.info(f"Found retry-after header: {retry_after}")
+                    return float(retry_after)
+
+            # Try to get from response object if available
+            if hasattr(error, 'response') and error.response:
+                if hasattr(error.response, 'headers'):
+                    headers = error.response.headers
+                    retry_after = headers.get('retry-after') or headers.get('Retry-After')
+                    if retry_after:
+                        logger.info(f"Found retry-after in response headers: {retry_after}")
+                        return float(retry_after)
+
+            # Try to parse from error message (fallback)
+            error_str = str(error)
+            # Look for patterns like "retry after 2 seconds" or "retry-after: 2"
+            match = re.search(r'retry[_\-\s]?after[:\s]+(\d+(?:\.\d+)?)', error_str, re.IGNORECASE)
+            if match:
+                retry_after = float(match.group(1))
+                logger.info(f"Parsed retry-after from error message: {retry_after}")
+                return retry_after
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Failed to parse retry-after header: {e}")
+            return None
+
+    async def _rate_limited_completion(self, **kwargs):
+        """
+        Make a completion request with automatic 429 retry handling.
+
+        Uses Groq's retry-after header to know exactly how long to wait.
+        """
+        retries = 0
+
+        while True:
+            try:
+                return await litellm.acompletion(**self._get_completion_kwargs(**kwargs))
+
+            except RateLimitError as e:
+                retries += 1
+
+                if retries > self.max_rate_limit_retries:
+                    logger.error(f"Max rate limit retries ({self.max_rate_limit_retries}) exceeded")
+                    raise
+
+                # Parse retry-after from Groq's response headers
+                retry_after = self._parse_retry_after(e)
+
+                if retry_after is None:
+                    # Fallback: exponential backoff if header not available
+                    retry_after = min(60, self.default_retry_wait * (2 ** (retries - 1)))
+                    logger.warning(
+                        f"No retry-after header found, using fallback: {retry_after}s"
+                    )
+
+                logger.warning(
+                    f"Rate limit hit (429), waiting {retry_after}s before retry "
+                    f"({retries}/{self.max_rate_limit_retries})"
+                )
+
+                await asyncio.sleep(retry_after)
 
     @retry(
         stop=stop_after_attempt(3),
