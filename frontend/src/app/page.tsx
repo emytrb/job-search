@@ -447,6 +447,29 @@ export default function AnalyzerPage() {
             </div>
           </div>
 
+          {/* Job Summary - Always shown at the top */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold mb-4">Job Summary</h2>
+            <div className="space-y-2">
+              <p>
+                <span className="font-medium">Title:</span> {result.job_title}
+              </p>
+              <p>
+                <span className="font-medium">Company:</span> {result.company_name}
+              </p>
+              {result.key_requirements && result.key_requirements.length > 0 && (
+                <div>
+                  <span className="font-medium">Key Requirements:</span>
+                  <ul className="list-disc list-inside mt-1 text-gray-600">
+                    {result.key_requirements.map((req, i) => (
+                      <li key={i}>{req}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Eligibility Status - Show rejection banner if not eligible */}
           {result.eligibility_status === "not_eligible" && (
             <div className="bg-red-50 border border-red-300 rounded-lg p-6">
@@ -526,27 +549,6 @@ export default function AnalyzerPage() {
           {/* Only show detailed analysis if not rejected */}
           {result.eligibility_status !== "not_eligible" && (
             <>
-              {/* Job Summary */}
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold mb-4">Job Summary</h2>
-                <div className="space-y-2">
-                  <p>
-                    <span className="font-medium">Title:</span> {result.job_title}
-                  </p>
-                  <p>
-                    <span className="font-medium">Company:</span> {result.company_name}
-                  </p>
-                  <div>
-                    <span className="font-medium">Key Requirements:</span>
-                    <ul className="list-disc list-inside mt-1 text-gray-600">
-                      {result.key_requirements.map((req, i) => (
-                        <li key={i}>{req}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
               {/* Resume Suggestions */}
               <div className="bg-white rounded-lg border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">

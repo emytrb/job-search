@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 from sqlalchemy.orm import joinedload
@@ -16,6 +17,7 @@ from app.schemas.analyzer import (
     SavedAnalysisResponse,
     SavedAnalysisListItem,
     SavedAnalysisListResponse,
+    ToggleAppliedResponse,
     QueueItemResponse,
     QueueStatusResponse,
     QueueAddResponse,
@@ -294,19 +296,20 @@ async def list_saved_analyses(
     db: AsyncSession = Depends(get_db),
     limit: int = 50,
     offset: int = 0,
+    applied: Optional[bool] = Query(None, description="Filter by applied status: true=applied, false=not applied, omit for both"),
 ):
     # Get total count
     count_query = select(func.count(SavedAnalysis.id))
+    if applied is not None:
+        count_query = count_query.where(SavedAnalysis.applied == applied)
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
     # Get analyses
-    query = (
-        select(SavedAnalysis)
-        .order_by(desc(SavedAnalysis.created_at))
-        .limit(limit)
-        .offset(offset)
-    )
+    query = select(SavedAnalysis).order_by(desc(SavedAnalysis.created_at))
+    if applied is not None:
+        query = query.where(SavedAnalysis.applied == applied)
+    query = query.limit(limit).offset(offset)
     result = await db.execute(query)
     analyses = result.scalars().all()
 
@@ -318,7 +321,9 @@ async def list_saved_analyses(
                 company_name=a.company_name,
                 eligibility_status=a.eligibility_status,
                 matching_score=a.matching_score,
+                applied=a.applied,
                 created_at=a.created_at,
+                last_analyzed_at=a.last_analyzed_at,
             )
             for a in analyses
         ],
@@ -357,8 +362,29 @@ async def get_saved_analysis(
         ],
         cover_letter=analysis.cover_letter,
         processing_time_ms=analysis.processing_time_ms,
+        applied=analysis.applied,
         created_at=analysis.created_at,
+        last_analyzed_at=analysis.last_analyzed_at,
     )
+
+
+@router.patch("/saved/{analysis_id}/applied", response_model=ToggleAppliedResponse)
+async def toggle_applied(
+    analysis_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle the applied status of a saved analysis."""
+    query = select(SavedAnalysis).where(SavedAnalysis.id == analysis_id)
+    result = await db.execute(query)
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    analysis.applied = not analysis.applied
+    await db.commit()
+
+    return ToggleAppliedResponse(id=analysis.id, applied=analysis.applied)
 
 
 @router.delete("/saved/{analysis_id}")

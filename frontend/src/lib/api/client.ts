@@ -92,7 +92,10 @@ export interface SavedAnalysis {
   ats_keywords: ATSKeyword[]
   cover_letter: string
   processing_time_ms: number
+  llm_model: string | null
+  applied: boolean
   created_at: string
+  last_analyzed_at: string
 }
 
 export interface SavedAnalysisListItem {
@@ -101,7 +104,9 @@ export interface SavedAnalysisListItem {
   company_name: string
   eligibility_status: "eligible" | "partially_eligible" | "not_eligible"
   matching_score: number
+  applied: boolean
   created_at: string
+  last_analyzed_at: string
 }
 
 export interface SavedAnalysisListResponse {
@@ -182,15 +187,22 @@ export const api = {
       fetchApi<{ status: string }>(`/analyzer/queue/${id}`, { method: "DELETE" }),
 
     // Saved analyses
-    list: (params?: { limit?: number; offset?: number }) => {
+    list: (params?: { limit?: number; offset?: number; applied?: boolean | null }) => {
       const searchParams = new URLSearchParams()
       if (params?.limit) searchParams.set("limit", params.limit.toString())
       if (params?.offset) searchParams.set("offset", params.offset.toString())
+      if (params?.applied !== undefined && params?.applied !== null) {
+        searchParams.set("applied", params.applied.toString())
+      } else if (params?.applied === null) {
+        // null means "both" - don't send the param so backend returns all
+      }
       const query = searchParams.toString()
       return fetchApi<SavedAnalysisListResponse>(`/analyzer/saved${query ? `?${query}` : ""}`)
     },
     get: (id: number) => fetchApi<SavedAnalysis>(`/analyzer/saved/${id}`),
     delete: (id: number) => fetchApi<{ status: string }>(`/analyzer/saved/${id}`, { method: "DELETE" }),
+    toggleApplied: (id: number) =>
+      fetchApi<{ id: number; applied: boolean }>(`/analyzer/saved/${id}/applied`, { method: "PATCH" }),
     requeue: (analysisIds: number[]) =>
       fetchApi<RequeueResponse>("/analyzer/requeue", {
         method: "POST",

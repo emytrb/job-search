@@ -149,6 +149,7 @@ OUTPUT REQUIREMENTS:
 - No explanations before or after
 - Start your response with {{ and end with }}
 - You MUST analyze the ACTUAL job posting and CV provided - do NOT copy example values
+- You MUST extract the actual job title and company name from the job posting
 
 Required JSON structure (replace ALL placeholder values with your actual analysis):
 {{
@@ -159,7 +160,12 @@ Required JSON structure (replace ALL placeholder values with your actual analysi
     "<PASS/FAIL>: <Your analysis of tech stack match for THIS specific job and candidate>",
     "<PASS/FAIL>: <Your analysis of seniority for THIS specific job>",
     "<PASS/FAIL>: <Your analysis of location for THIS specific job>"
-  ]
+  ],
+  "job_summary": {{
+    "title": "<ACTUAL_JOB_TITLE_FROM_POSTING>",
+    "company": "<ACTUAL_COMPANY_NAME_FROM_POSTING>",
+    "key_requirements": ["<REQ_1>", "<REQ_2>", "<REQ_3>", "<REQ_4>", "<REQ_5>"]
+  }}
 }}
 
 === EXAMPLES TO LEARN FROM ===
@@ -354,24 +360,24 @@ OUTPUT REQUIREMENTS:
 
 Required JSON structure (replace ALL placeholder values with your actual analysis):
 {{
+  "ats_keywords": [
+    {{"keyword": "<KEYWORD_FROM_THIS_JOB_POSTING>", "found_in_resume": <true_or_false>, "importance": "<required_or_preferred>"}}
+  ],
   "resume_suggestions": [
     {{
       "section": "<ACTUAL_SECTION_NAME>",
       "suggestion": "<YOUR_SPECIFIC_SUGGESTION_FOR_THIS_CANDIDATE>",
       "reason": "<WHY_THIS_HELPS_FOR_THIS_SPECIFIC_JOB>"
     }}
-  ],
-  "ats_keywords": [
-    {{"keyword": "<KEYWORD_FROM_THIS_JOB_POSTING>", "found_in_resume": <true_or_false>, "importance": "<required_or_preferred>"}}
   ]
 }}
 
 Guidelines:
-- Provide ALL suggestions that would improve the match (no artificial limit)
-- Multiple suggestions per section are encouraged if relevant
-- Identify 5-15 important ATS keywords from the job posting
+- FIRST identify 5-15 important ATS keywords from the job posting (generated first to ensure they're included)
 - Mark keywords as found_in_resume: true ONLY if they appear in the CV
 - Mark importance as "required" or "preferred" based on job posting language
+- THEN provide ALL suggestions that would improve the match (no artificial limit)
+- Multiple suggestions per section are encouraged if relevant
 - Focus on making existing experience more visible, not inventing new experience
 
 IMPORTANT: NEVER suggest adding skills or experience the candidate does not have. Output ONLY the JSON object, nothing else."""

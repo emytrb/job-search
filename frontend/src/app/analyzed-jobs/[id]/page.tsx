@@ -15,6 +15,8 @@ import {
   ChevronRight,
   Trash2,
   ExternalLink,
+  CheckCircle,
+  Undo2,
 } from "lucide-react"
 
 export default function AnalysisDetailPage() {
@@ -28,12 +30,15 @@ export default function AnalysisDetailPage() {
   const [copied, setCopied] = useState(false)
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState(false)
+  const [applied, setApplied] = useState(false)
+  const [toggling, setToggling] = useState(false)
 
   useEffect(() => {
     async function loadAnalysis() {
       try {
         const data = await api.analyzer.get(id)
         setAnalysis(data)
+        setApplied(data.applied)
       } catch {
         setError("Failed to load analysis")
       } finally {
@@ -61,6 +66,18 @@ export default function AnalysisDetailPage() {
     } catch {
       setError("Failed to delete analysis")
       setDeleting(false)
+    }
+  }
+
+  async function handleToggleApplied() {
+    setToggling(true)
+    try {
+      const result = await api.analyzer.toggleApplied(id)
+      setApplied(result.applied)
+    } catch {
+      setError("Failed to update applied status")
+    } finally {
+      setToggling(false)
     }
   }
 
@@ -156,7 +173,8 @@ export default function AnalysisDetailPage() {
           <h1 className="text-2xl font-bold text-gray-900">{analysis.job_title}</h1>
           <p className="text-lg text-gray-600">{analysis.company_name}</p>
           <p className="text-sm text-gray-400 mt-1">
-            Analyzed on {formatDate(analysis.created_at)}
+            Created on {formatDate(analysis.created_at)} · Last analyzed on {formatDate(analysis.last_analyzed_at)}
+            {analysis.llm_model && <> · Model: {analysis.llm_model}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -170,6 +188,24 @@ export default function AnalysisDetailPage() {
             View Job Post
           </a>
           <button
+            onClick={handleToggleApplied}
+            disabled={toggling}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-md ${
+              applied
+                ? "text-orange-600 border-orange-200 hover:bg-orange-50"
+                : "text-green-600 border-green-200 hover:bg-green-50"
+            }`}
+          >
+            {toggling ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : applied ? (
+              <Undo2 className="w-4 h-4" />
+            ) : (
+              <CheckCircle className="w-4 h-4" />
+            )}
+            {applied ? "I Did not Apply" : "I Applied"}
+          </button>
+          <button
             onClick={handleDelete}
             disabled={deleting}
             className="flex items-center gap-2 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-md hover:bg-red-50"
@@ -181,6 +217,29 @@ export default function AnalysisDetailPage() {
             )}
             Delete
           </button>
+        </div>
+      </div>
+
+      {/* Job Summary - Always shown at the top */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <h2 className="text-lg font-semibold mb-4">Job Summary</h2>
+        <div className="space-y-2">
+          <p>
+            <span className="font-medium">Title:</span> {analysis.job_title}
+          </p>
+          <p>
+            <span className="font-medium">Company:</span> {analysis.company_name}
+          </p>
+          {analysis.key_requirements && analysis.key_requirements.length > 0 && (
+            <div>
+              <span className="font-medium">Key Requirements:</span>
+              <ul className="list-disc list-inside mt-1 text-gray-600">
+                {analysis.key_requirements.map((req, i) => (
+                  <li key={i}>{req}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 
@@ -275,27 +334,6 @@ export default function AnalysisDetailPage() {
         {/* Only show detailed analysis if not rejected */}
         {analysis.eligibility_status !== "not_eligible" && (
           <>
-            {/* Job Summary */}
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <h2 className="text-lg font-semibold mb-4">Job Summary</h2>
-              <div className="space-y-2">
-                <p>
-                  <span className="font-medium">Title:</span> {analysis.job_title}
-                </p>
-                <p>
-                  <span className="font-medium">Company:</span> {analysis.company_name}
-                </p>
-                <div>
-                  <span className="font-medium">Key Requirements:</span>
-                  <ul className="list-disc list-inside mt-1 text-gray-600">
-                    {analysis.key_requirements.map((req, i) => (
-                      <li key={i}>{req}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </div>
-
             {/* Resume Suggestions */}
             <div className="bg-white rounded-lg border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">

@@ -52,6 +52,7 @@ class JobSummary:
 class EligibilityResult:
     status: str  # "eligible" | "partially_eligible" | "not_eligible"
     reasons: list[str]
+    job_summary: JobSummary
 
 
 @dataclass
@@ -296,16 +297,25 @@ class LLMClient:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=2048,
         )
 
         content = response.choices[0].message.content
         logger.info(f"Eligibility raw response:\n{content}")
         parsed = self._parse_response(content)
 
+        # Parse job_summary from eligibility response
+        job_summary_data = parsed.get("job_summary", {})
+        job_summary = JobSummary(
+            title=job_summary_data.get("title", "Unknown"),
+            company=job_summary_data.get("company", "Unknown"),
+            key_requirements=job_summary_data.get("key_requirements", []),
+        )
+
         return EligibilityResult(
             status=parsed.get("eligibility_status", "partially_eligible"),
             reasons=parsed.get("eligibility_reasons", []),
+            job_summary=job_summary,
         )
 
     async def _analyze_matching(
@@ -329,7 +339,7 @@ class LLMClient:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=2048,
         )
 
         content = response.choices[0].message.content
@@ -374,7 +384,7 @@ class LLMClient:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=2048,
+            max_tokens=8192,  # Increased to avoid truncating ats_keywords
         )
 
         content = response.choices[0].message.content
@@ -481,7 +491,7 @@ class LLMClient:
             }
             logger.info(f"Eligibility status: {eligibility.status}")
 
-            # Early exit if not eligible
+            # Early exit if not eligible (but still return job metadata)
             if eligibility.status == "not_eligible":
                 processing_time = int((time.time() - start_time) * 1000)
                 logger.info("Candidate not eligible, skipping remaining analysis")
@@ -490,7 +500,7 @@ class LLMClient:
                     eligibility_reasons=eligibility.reasons,
                     matching_score=0,
                     matching_explanation="Candidate not eligible for this position.",
-                    job_summary=JobSummary(title="", company="", key_requirements=[]),
+                    job_summary=eligibility.job_summary,  # Use job summary from eligibility check
                     resume_suggestions=[],
                     ats_keywords=[],
                     cover_letter="",

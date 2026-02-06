@@ -53,7 +53,10 @@ class SavedAnalysisResponse(BaseModel):
     ats_keywords: list[ATSKeywordResponse]
     cover_letter: str
     processing_time_ms: int
+    llm_model: str | None = None
+    applied: bool = False
     created_at: datetime
+    last_analyzed_at: datetime
 
     class Config:
         from_attributes = True
@@ -65,10 +68,17 @@ class SavedAnalysisListItem(BaseModel):
     company_name: str
     eligibility_status: str
     matching_score: int
+    applied: bool = False
     created_at: datetime
+    last_analyzed_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class ToggleAppliedResponse(BaseModel):
+    id: int
+    applied: bool
 
 
 class SavedAnalysisListResponse(BaseModel):

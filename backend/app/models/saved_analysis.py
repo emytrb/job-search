@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, func
+from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, JSON, func
 
 from app.db.session import Base
 
@@ -36,4 +36,7 @@ class SavedAnalysis(Base):
 
     # Metadata
     processing_time_ms = Column(Integer, nullable=False)
+    llm_model = Column(String(512), nullable=True)
+    applied = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_analyzed_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -15,14 +15,16 @@ export default function AnalyzedJobsPage() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [requeuing, setRequeuing] = useState(false)
+  const [appliedFilter, setAppliedFilter] = useState<"not_applied" | "applied" | "both">("not_applied")
 
   useEffect(() => {
     loadAnalyses()
-  }, [])
+  }, [appliedFilter])
 
   async function loadAnalyses() {
     try {
-      const response = await api.analyzer.list()
+      const appliedParam = appliedFilter === "not_applied" ? false : appliedFilter === "applied" ? true : null
+      const response = await api.analyzer.list({ applied: appliedParam })
       setAnalyses(response.analyses)
     } catch {
       setError("Failed to load analyzed jobs")
@@ -107,7 +109,7 @@ export default function AnalyzedJobsPage() {
     try {
       await api.analyzer.requeue(Array.from(selectedIds))
       exitSelectMode()
-      router.push("/analyzer")
+      router.push("")
     } catch {
       setError("Failed to requeue analyses")
     } finally {
@@ -149,6 +151,15 @@ export default function AnalyzedJobsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Analyzed Jobs</h1>
         </div>
         <div className="flex items-center gap-2">
+          <select
+            value={appliedFilter}
+            onChange={(e) => setAppliedFilter(e.target.value as "not_applied" | "applied" | "both")}
+            className="text-sm border border-gray-300 rounded-md px-3 py-2 bg-white text-gray-700"
+          >
+            <option value="not_applied">Not Applied</option>
+            <option value="applied">Applied</option>
+            <option value="both">All Jobs</option>
+          </select>
           {selectMode ? (
             <>
               <button
@@ -280,7 +291,14 @@ export default function AnalyzedJobsPage() {
                   {analysis.job_title}
                 </h3>
                 <p className="text-gray-600 text-sm mb-2">{analysis.company_name}</p>
-                <p className="text-gray-400 text-xs">{formatDate(analysis.created_at)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-gray-400 text-xs">{formatDate(analysis.last_analyzed_at)}</p>
+                  {analysis.applied && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                      Applied
+                    </span>
+                  )}
+                </div>
               </CardWrapper>
             )
           })}

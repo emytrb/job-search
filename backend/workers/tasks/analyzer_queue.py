@@ -87,6 +87,8 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                     ]
                     saved_analysis.cover_letter = analysis.cover_letter
                     saved_analysis.processing_time_ms = analysis.processing_time_ms
+                    saved_analysis.llm_model = analysis.model_used
+                    saved_analysis.last_analyzed_at = datetime.now(timezone.utc)
                     logger.info(f"Updated existing SavedAnalysis {saved_analysis.id}")
                 else:
                     # Fallback: create new if original was deleted
@@ -110,6 +112,7 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                         ],
                         cover_letter=analysis.cover_letter,
                         processing_time_ms=analysis.processing_time_ms,
+                        llm_model=analysis.model_used,
                     )
                     db.add(saved_analysis)
                     await db.flush()
@@ -137,6 +140,7 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                     ],
                     cover_letter=analysis.cover_letter,
                     processing_time_ms=analysis.processing_time_ms,
+                    llm_model=analysis.model_used,
                 )
                 db.add(saved_analysis)
                 await db.flush()

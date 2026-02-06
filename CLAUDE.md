@@ -16,12 +16,14 @@ When you have completed a significant feature, ask the user if they want you to 
 
 ### Development
 
+All services run via Docker during development.
+
 ```bash
 # Start all services
-sudo docker-compose up
+docker-compose up
 
 # Start specific services
-sudo docker-compose up postgres redis backend frontend
+docker-compose up postgres redis backend frontend
 
 # Backend only (requires postgres/redis running)
 cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -36,7 +38,10 @@ cd backend && alembic upgrade head
 cd backend && alembic revision --autogenerate -m "description"
 ```
 
-:warning: Always use 'sudo' for docker and docker compose commands
+## DB Credentials
+
+User: `jobsearcher`
+Password: `changeme`
 
 ### Frontend
 
@@ -98,6 +103,7 @@ User Input → Analysis Queue → LLM Analysis → SavedAnalysis → Frontend/Di
 ### Rate Limiting
 
 The LLM client handles Groq's rate limits automatically:
+
 - Catches 429 responses and reads the `retry-after` header
 - Waits the exact time specified before retrying
 - Falls back to exponential backoff if header unavailable
@@ -139,3 +145,45 @@ Copy `.env.example` to `.env`. Key variables:
 - `/analyzed-jobs/{id}` - Detailed view of a single analysis
 - `/digest` - Preview and send email digests
 - `/settings` - Configure CV, guidelines, and preferences
+
+## Project Structure
+
+```
+job-searcher/
+├── backend/                    # FastAPI backend application
+│   ├── alembic/               # Database migrations
+│   │   └── versions/          # Migration files (001-006)
+│   ├── app/                   # Main application code
+│   │   ├── api/v1/endpoints/  # REST API endpoints (analyzer, preferences, digest)
+│   │   ├── core/              # Configuration and settings
+│   │   ├── db/                # Database session management
+│   │   ├── models/            # SQLAlchemy ORM models
+│   │   ├── schemas/           # Pydantic request/response schemas
+│   │   ├── services/          # Business logic services
+│   │   └── utils/             # Utility functions
+│   ├── llm/                   # LLM integration
+│   │   ├── client.py          # LiteLLM client with rate limiting
+│   │   └── prompts/           # Analysis prompts (eligibility, matching, resume, cover letter)
+│   ├── mailer/                # Email functionality
+│   │   ├── sender.py          # SMTP email sender
+│   │   └── templates/         # Jinja2 email templates (digest.html)
+│   └── workers/               # Celery background workers
+│       ├── celery_app.py      # Celery configuration
+│       └── tasks/             # Task definitions (analyzer_queue, digest)
+├── frontend/                  # Next.js frontend application
+│   └── src/
+│       ├── app/               # Next.js App Router pages
+│       │   ├── page.tsx       # Home/Analyzer page
+│       │   ├── analyzed-jobs/ # Analyzed jobs list and detail pages
+│       │   ├── digest/        # Digest preview page
+│       │   └── settings/      # Settings page
+│       ├── components/        # Reusable React components
+│       └── lib/
+│           └── api/           # API client (client.ts)
+├── infra/                     # Infrastructure configuration
+│   ├── nginx/                 # Nginx reverse proxy config
+│   └── vpn/                   # VPN configuration (legacy, unused)
+├── docker-compose.yml         # Docker services orchestration
+├── .env                       # Environment variables (not committed)
+└── CLAUDE.md                  # This file
+```
