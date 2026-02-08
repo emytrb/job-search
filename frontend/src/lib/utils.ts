@@ -13,22 +13,41 @@ export function formatDate(dateString: string): string {
   })
 }
 
-export function formatSalary(min: number | null, max: number | null, currency: string | null): string {
-  if (!min && !max) return ""
-  const curr = currency || "GBP"
-  const symbol = curr === "GBP" ? "£" : curr === "EUR" ? "€" : "$"
-
-  if (min && max) {
-    return `${symbol}${(min / 1000).toFixed(0)}k - ${symbol}${(max / 1000).toFixed(0)}k`
-  }
-  if (min) {
-    return `${symbol}${(min / 1000).toFixed(0)}k+`
-  }
-  return `Up to ${symbol}${(max! / 1000).toFixed(0)}k`
+export function formatDateTime(dateString: string): string {
+  return new Date(dateString).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
 export function getScoreColor(score: number): string {
-  if (score >= 70) return "text-green-600 bg-green-100"
-  if (score >= 50) return "text-yellow-600 bg-yellow-100"
-  return "text-red-600 bg-red-100"
+  if (score >= 80) return "text-green-600 bg-green-50 border-green-200"
+  if (score >= 60) return "text-yellow-600 bg-yellow-50 border-yellow-200"
+  return "text-red-600 bg-red-50 border-red-200"
+}
+
+export function getScoreBadgeColor(score: number): string {
+  if (score >= 80) return "text-green-700 bg-green-100"
+  if (score >= 60) return "text-yellow-700 bg-yellow-100"
+  return "text-red-700 bg-red-100"
+}
+
+export function getScoreCardStyle(score: number): string {
+  if (score >= 80) return "bg-green-50 border-green-300 hover:border-green-400"
+  if (score >= 60) return "bg-yellow-50 border-yellow-300 hover:border-yellow-400"
+  return "bg-red-50 border-red-300 hover:border-red-400"
+}
+
+export function getImportanceColor(importance: string): string {
+  switch (importance.toLowerCase()) {
+    case "required":
+      return "bg-red-100 text-red-700"
+    case "preferred":
+      return "bg-yellow-100 text-yellow-700"
+    default:
+      return "bg-gray-100 text-gray-700"
+  }
 }

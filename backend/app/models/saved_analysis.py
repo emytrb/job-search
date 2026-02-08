@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, JSON, func
+from sqlalchemy import BigInteger, Boolean, Column, Integer, String, Text, DateTime, JSON, func
 
 from app.db.session import Base
 
@@ -12,7 +12,7 @@ class SavedAnalysis(Base):
     job_title = Column(String(512), nullable=False)
     company_name = Column(String(255), nullable=False)
     job_description = Column(Text, nullable=False)
-    job_url = Column(String(2048), nullable=False)
+    job_url = Column(String(2048), nullable=True)
 
     # Eligibility results
     eligibility_status = Column(String(50), nullable=False)  # eligible, partially_eligible, not_eligible
@@ -37,6 +37,8 @@ class SavedAnalysis(Base):
     # Metadata
     processing_time_ms = Column(Integer, nullable=False)
     llm_model = Column(String(512), nullable=True)
+    offers_sponsorship = Column(Boolean, nullable=False, server_default="false")
     applied = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
+    description_simhash = Column(BigInteger, nullable=False)

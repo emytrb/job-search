@@ -26,6 +26,9 @@ async def get_preferences(db: AsyncSession = Depends(get_db)):
             ats_guidelines="",
             job_requirements_context="",
             cover_letter_guidelines="",
+            similarity_threshold=90,
+            sponsorship_bonus_threshold=50,
+            stale_task_timeout_minutes=10,
         )
         db.add(prefs)
         await db.commit()

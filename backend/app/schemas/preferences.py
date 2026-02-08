@@ -14,6 +14,9 @@ class UserPreferencesCreate(BaseModel):
     ats_guidelines: Optional[str] = None
     job_requirements_context: Optional[str] = None
     cover_letter_guidelines: Optional[str] = None
+    similarity_threshold: Optional[int] = None
+    sponsorship_bonus_threshold: Optional[int] = None
+    stale_task_timeout_minutes: Optional[int] = None
 
 
 class UserPreferencesResponse(BaseModel):
@@ -28,6 +31,9 @@ class UserPreferencesResponse(BaseModel):
     ats_guidelines: str = ""
     job_requirements_context: str = ""
     cover_letter_guidelines: str = ""
+    similarity_threshold: int = 90
+    sponsorship_bonus_threshold: int = 50
+    stale_task_timeout_minutes: int = 10
     created_at: datetime
     updated_at: Optional[datetime]
 
@@ -35,6 +41,21 @@ class UserPreferencesResponse(BaseModel):
     @classmethod
     def empty_str_if_none(cls, v):
         return v or ""
+
+    @field_validator('similarity_threshold', mode='before')
+    @classmethod
+    def default_threshold(cls, v):
+        return v if v is not None else 90
+
+    @field_validator('sponsorship_bonus_threshold', mode='before')
+    @classmethod
+    def default_sponsorship_threshold(cls, v):
+        return v if v is not None else 50
+
+    @field_validator('stale_task_timeout_minutes', mode='before')
+    @classmethod
+    def default_stale_timeout(cls, v):
+        return v if v is not None else 10
 
     class Config:
         from_attributes = True

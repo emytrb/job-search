@@ -17,7 +17,9 @@ class AnalysisQueueItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # Job text to analyze
+    # Job information
+    job_title = Column(String(512), nullable=False)
+    company_name = Column(String(255), nullable=False)
     job_text = Column(Text, nullable=False)
     job_url = Column(String(2048), nullable=False)
 

@@ -30,6 +30,9 @@ export interface UserPreferences {
   ats_guidelines: string
   job_requirements_context: string
   cover_letter_guidelines: string
+  similarity_threshold: number
+  sponsorship_bonus_threshold: number
+  stale_task_timeout_minutes: number
 }
 
 export interface DigestPreview {
@@ -43,6 +46,8 @@ export interface DigestPreview {
 }
 
 export interface AnalyzeRequest {
+  job_title: string
+  company_name: string
   job_text: string
   job_url: string
 }
@@ -82,7 +87,7 @@ export interface SavedAnalysis {
   job_title: string
   company_name: string
   job_description: string
-  job_url: string
+  job_url: string | null
   eligibility_status: "eligible" | "partially_eligible" | "not_eligible"
   eligibility_reasons: string[]
   matching_score: number
@@ -93,6 +98,7 @@ export interface SavedAnalysis {
   cover_letter: string
   processing_time_ms: number
   llm_model: string | null
+  offers_sponsorship: boolean
   applied: boolean
   created_at: string
   last_analyzed_at: string
@@ -104,6 +110,7 @@ export interface SavedAnalysisListItem {
   company_name: string
   eligibility_status: "eligible" | "partially_eligible" | "not_eligible"
   matching_score: number
+  offers_sponsorship: boolean
   applied: boolean
   created_at: string
   last_analyzed_at: string
@@ -123,8 +130,8 @@ export interface QueueItem {
   retry_count: number
   max_retries: number
   saved_analysis_id: number | null
-  job_title: string | null
-  company_name: string | null
+  job_title: string
+  company_name: string
   matching_score: number | null
   created_at: string
   started_at: string | null
@@ -148,6 +155,14 @@ export interface QueueAddResponse {
 export interface RequeueResponse {
   queued_count: number
   queue_items: QueueAddResponse[]
+}
+
+export interface DuplicateCheckResponse {
+  is_duplicate: boolean
+  similarity_score: number
+  matched_analysis_id: number | null
+  matched_job_title: string | null
+  matched_company_name: string | null
 }
 
 async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -185,6 +200,8 @@ export const api = {
     getQueue: () => fetchApi<QueueStatusResponse>("/analyzer/queue"),
     removeFromQueue: (id: number) =>
       fetchApi<{ status: string }>(`/analyzer/queue/${id}`, { method: "DELETE" }),
+    retryQueueItem: (id: number) =>
+      fetchApi<{ status: string; id: number }>(`/analyzer/queue/${id}/retry`, { method: "POST" }),
 
     // Saved analyses
     list: (params?: { limit?: number; offset?: number; applied?: boolean | null }) => {
@@ -207,6 +224,11 @@ export const api = {
       fetchApi<RequeueResponse>("/analyzer/requeue", {
         method: "POST",
         body: JSON.stringify({ analysis_ids: analysisIds }),
+      }),
+    checkDuplicate: (jobText: string) =>
+      fetchApi<DuplicateCheckResponse>("/analyzer/check-duplicate", {
+        method: "POST",
+        body: JSON.stringify({ job_text: jobText }),
       }),
   },
 }

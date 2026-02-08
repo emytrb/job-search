@@ -22,6 +22,9 @@ export default function SettingsPage() {
     ats_guidelines: "",
     job_requirements_context: "",
     cover_letter_guidelines: "",
+    similarity_threshold: 90,
+    sponsorship_bonus_threshold: 50,
+    stale_task_timeout_minutes: 10,
   })
 
   useEffect(() => {
@@ -44,6 +47,9 @@ export default function SettingsPage() {
         ats_guidelines: data.ats_guidelines || "",
         job_requirements_context: data.job_requirements_context || "",
         cover_letter_guidelines: data.cover_letter_guidelines || "",
+        similarity_threshold: data.similarity_threshold ?? 90,
+        sponsorship_bonus_threshold: data.sponsorship_bonus_threshold ?? 50,
+        stale_task_timeout_minutes: data.stale_task_timeout_minutes ?? 10,
       })
     } catch {
       setError("Failed to load preferences")
@@ -69,7 +75,10 @@ export default function SettingsPage() {
         ats_guidelines: formData.ats_guidelines,
         job_requirements_context: formData.job_requirements_context,
         cover_letter_guidelines: formData.cover_letter_guidelines,
-      })
+        similarity_threshold: formData.similarity_threshold,
+        sponsorship_bonus_threshold: formData.sponsorship_bonus_threshold,
+        stale_task_timeout_minutes: formData.stale_task_timeout_minutes,
+      } as Partial<UserPreferences>)
 
       setSuccess("Preferences saved successfully!")
       setTimeout(() => setSuccess(null), 5000)
@@ -268,6 +277,70 @@ export default function SettingsPage() {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Style preferences for generated cover letters.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Duplicate Detection Threshold: {formData.similarity_threshold}%
+                </label>
+                <input
+                  type="range"
+                  min={50}
+                  max={100}
+                  value={formData.similarity_threshold}
+                  onChange={(e) => setFormData({ ...formData, similarity_threshold: parseInt(e.target.value) })}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>50% (loose)</span>
+                  <span>100% (disabled)</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  How similar a job must be to trigger a duplicate warning. Set to 100% to effectively disable duplicate detection.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Sponsorship Bonus Threshold: {formData.sponsorship_bonus_threshold}%
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={formData.sponsorship_bonus_threshold}
+                  onChange={(e) => setFormData({ ...formData, sponsorship_bonus_threshold: parseInt(e.target.value) })}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>0% (always apply)</span>
+                  <span>100% (disable)</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Minimum match score required to apply the +20% sponsorship bonus. Set to 100% to disable.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Stale Task Timeout: {formData.stale_task_timeout_minutes} minutes
+                </label>
+                <input
+                  type="range"
+                  min={5}
+                  max={30}
+                  step={1}
+                  value={formData.stale_task_timeout_minutes}
+                  onChange={(e) => setFormData({ ...formData, stale_task_timeout_minutes: parseInt(e.target.value) })}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>5 min (aggressive)</span>
+                  <span>30 min (conservative)</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  How long a task can stay processing before being automatically reset. Increase if your analyses are slow due to rate limits.
                 </p>
               </div>
             </div>

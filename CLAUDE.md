@@ -17,6 +17,7 @@ When you have completed a significant feature, ask the user if they want you to 
 ### Development
 
 All services run via Docker during development.
+When you want to test your code, you NEED to restart the containers so they run the new code.
 
 ```bash
 # Start all services

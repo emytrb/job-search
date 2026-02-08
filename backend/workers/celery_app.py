@@ -21,7 +21,7 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=600,  # 10 minutes max per task
+    task_time_limit=1800,  # 30 minutes max per task
     worker_prefetch_multiplier=1,  # One task at a time for LLM workers
     task_routes={
         "workers.tasks.digest.*": {"queue": "digest"},
@@ -36,5 +36,10 @@ celery_app.conf.beat_schedule = {
     "send-daily-digest": {
         "task": "workers.tasks.digest.send_daily_digest",
         "schedule": crontab(minute=0, hour=8),
+    },
+    # Recover stale queue tasks every 60 seconds
+    "recover-stale-queue-tasks": {
+        "task": "workers.tasks.analyzer_queue.recover_stale_tasks",
+        "schedule": 60.0,
     },
 }

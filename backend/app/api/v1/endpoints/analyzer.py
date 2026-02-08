@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, text
 from sqlalchemy.orm import joinedload
 
 from app.core.config import settings
@@ -23,7 +23,10 @@ from app.schemas.analyzer import (
     QueueAddResponse,
     RequeueRequest,
     RequeueResponse,
+    CheckDuplicateRequest,
+    DuplicateCheckResponse,
 )
+from app.utils.simhash import compute_simhash
 from workers.tasks.analyzer_queue import process_queue_item
 
 router = APIRouter()
@@ -40,8 +43,8 @@ def build_queue_item_response(item: AnalysisQueueItem) -> QueueItemResponse:
         retry_count=item.retry_count,
         max_retries=item.max_retries,
         saved_analysis_id=item.saved_analysis_id,
-        job_title=item.saved_analysis.job_title if item.saved_analysis else None,
-        company_name=item.saved_analysis.company_name if item.saved_analysis else None,
+        job_title=item.job_title,
+        company_name=item.company_name,
         matching_score=item.saved_analysis.matching_score if item.saved_analysis else None,
         created_at=item.created_at,
         started_at=item.started_at,
@@ -68,6 +71,8 @@ async def add_to_queue(
 
     # Create queue item
     queue_item = AnalysisQueueItem(
+        job_title=request.job_title,
+        company_name=request.company_name,
         job_text=request.job_text,
         job_url=request.job_url,
         status=QueueItemStatus.PENDING.value,
@@ -108,6 +113,48 @@ async def add_to_queue(
         status=queue_item.status,
         position=position,
     )
+
+
+@router.post("/check-duplicate", response_model=DuplicateCheckResponse)
+async def check_duplicate(
+    request: CheckDuplicateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if a similar job description already exists."""
+    # Load user preferences for threshold
+    prefs_query = select(UserPreferences).limit(1)
+    prefs_result = await db.execute(prefs_query)
+    prefs = prefs_result.scalar_one_or_none()
+    threshold = prefs.similarity_threshold if prefs and prefs.similarity_threshold is not None else 90
+
+    # Convert threshold to max Hamming distance
+    max_distance = int((1 - threshold / 100) * 64)
+
+    # Compute simhash of input text
+    input_hash = compute_simhash(request.job_text)
+
+    # Use raw SQL for the Hamming distance via bit_count on XOR cast to bit(64)
+    query = text(
+        "SELECT id, job_title, company_name, "
+        "bit_count((description_simhash # :input_hash)::bit(64)) AS distance "
+        "FROM saved_analyses "
+        "WHERE bit_count((description_simhash # :input_hash)::bit(64)) <= :max_dist "
+        "ORDER BY distance LIMIT 1"
+    )
+    result = await db.execute(query, {"input_hash": input_hash, "max_dist": max_distance})
+    match = result.first()
+
+    if match:
+        similarity = round((1 - match.distance / 64) * 100, 1)
+        return DuplicateCheckResponse(
+            is_duplicate=True,
+            similarity_score=similarity,
+            matched_analysis_id=match.id,
+            matched_job_title=match.job_title,
+            matched_company_name=match.company_name,
+        )
+
+    return DuplicateCheckResponse(is_duplicate=False)
 
 
 @router.get("/queue", response_model=QueueStatusResponse)
@@ -189,6 +236,33 @@ async def remove_from_queue(
     await db.commit()
 
     return {"status": "deleted"}
+
+
+@router.post("/queue/{item_id}/retry")
+async def retry_queue_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset a failed queue item back to pending for immediate retry."""
+    query = select(AnalysisQueueItem).where(AnalysisQueueItem.id == item_id)
+    result = await db.execute(query)
+    item = result.scalar_one_or_none()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if item.status != QueueItemStatus.FAILED.value:
+        raise HTTPException(status_code=400, detail="Only failed items can be retried")
+
+    item.status = QueueItemStatus.PENDING.value
+    item.started_at = None
+    item.completed_at = None
+    item.celery_task_id = None
+    item.error_message = None
+    item.retry_count = 0
+    await db.commit()
+
+    return {"status": "retried", "id": item.id}
 
 
 @router.post("/requeue", response_model=RequeueResponse)
@@ -321,6 +395,7 @@ async def list_saved_analyses(
                 company_name=a.company_name,
                 eligibility_status=a.eligibility_status,
                 matching_score=a.matching_score,
+                offers_sponsorship=a.offers_sponsorship,
                 applied=a.applied,
                 created_at=a.created_at,
                 last_analyzed_at=a.last_analyzed_at,
@@ -362,6 +437,7 @@ async def get_saved_analysis(
         ],
         cover_letter=analysis.cover_letter,
         processing_time_ms=analysis.processing_time_ms,
+        offers_sponsorship=analysis.offers_sponsorship,
         applied=analysis.applied,
         created_at=analysis.created_at,
         last_analyzed_at=analysis.last_analyzed_at,

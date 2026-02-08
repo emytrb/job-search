@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { api, DigestPreview } from "@/lib/api/client"
+import { getScoreBadgeColor } from "@/lib/utils"
 import { Mail, Send } from "lucide-react"
 
 export default function DigestPage() {
@@ -106,11 +107,7 @@ export default function DigestPage() {
                       <p className="text-sm text-gray-500">{job.company}</p>
                     </div>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    job.score >= 70 ? "bg-green-100 text-green-700" :
-                    job.score >= 50 ? "bg-yellow-100 text-yellow-700" :
-                    "bg-red-100 text-red-700"
-                  }`}>
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${getScoreBadgeColor(job.score)}`}>
                     {job.score.toFixed(0)}
                   </span>
                 </div>

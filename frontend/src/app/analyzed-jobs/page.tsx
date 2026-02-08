@@ -4,7 +4,8 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { api, SavedAnalysisListItem } from "@/lib/api/client"
-import { FileText, Loader2, Trash2, Check, XCircle, AlertTriangle, CheckSquare, Square, RefreshCw, X } from "lucide-react"
+import { getScoreBadgeColor, getScoreCardStyle, formatDateTime } from "@/lib/utils"
+import { FileText, Loader2, Trash2, Check, XCircle, AlertTriangle, CheckSquare, Square, RefreshCw, X, Star, ArrowUpDown } from "lucide-react"
 
 export default function AnalyzedJobsPage() {
   const router = useRouter()
@@ -16,6 +17,7 @@ export default function AnalyzedJobsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [requeuing, setRequeuing] = useState(false)
   const [appliedFilter, setAppliedFilter] = useState<"not_applied" | "applied" | "both">("not_applied")
+  const [sortBy, setSortBy] = useState<"score" | "recent">("score")
 
   useEffect(() => {
     loadAnalyses()
@@ -50,18 +52,6 @@ export default function AnalyzedJobsPage() {
     }
   }
 
-  function getScoreBadgeColor(score: number) {
-    if (score >= 80) return "text-green-700 bg-green-100"
-    if (score >= 60) return "text-yellow-700 bg-yellow-100"
-    return "text-red-700 bg-red-100"
-  }
-
-  function getCardStyle(score: number) {
-    if (score >= 80) return "bg-green-50 border-green-300 hover:border-green-400"
-    if (score >= 60) return "bg-yellow-50 border-yellow-300 hover:border-yellow-400"
-    return "bg-red-50 border-red-300 hover:border-red-400"
-  }
-
   function getStatusIcon(status: string) {
     switch (status) {
       case "eligible":
@@ -75,8 +65,14 @@ export default function AnalyzedJobsPage() {
     }
   }
 
-  // Sort analyses by matching score (highest first)
-  const sortedAnalyses = [...analyses].sort((a, b) => b.matching_score - a.matching_score)
+  const sortedAnalyses = [...analyses].sort((a, b) => {
+    if (sortBy === "recent") {
+      return new Date(b.last_analyzed_at).getTime() - new Date(a.last_analyzed_at).getTime()
+    }
+    // Default: sponsorship first, then by matching score (highest first)
+    if (a.offers_sponsorship !== b.offers_sponsorship) return a.offers_sponsorship ? -1 : 1
+    return b.matching_score - a.matching_score
+  })
 
   function toggleSelection(id: number) {
     const newSelected = new Set(selectedIds)
@@ -124,17 +120,6 @@ export default function AnalyzedJobsPage() {
     }
   }
 
-  function formatDate(dateString: string) {
-    const date = new Date(dateString)
-    return date.toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -160,6 +145,14 @@ export default function AnalyzedJobsPage() {
             <option value="applied">Applied</option>
             <option value="both">All Jobs</option>
           </select>
+          <button
+            onClick={() => setSortBy(sortBy === "score" ? "recent" : "score")}
+            className={`flex items-center gap-1.5 text-sm border rounded-md px-3 py-2 transition-colors ${sortBy === "recent" ? "border-blue-400 bg-blue-50 text-blue-700" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"}`}
+            title={sortBy === "score" ? "Sorted by sponsorship, then score" : "Sorted by most recent"}
+          >
+            <ArrowUpDown className="w-4 h-4" />
+            {sortBy === "score" ? "Best Match" : "Most Recent"}
+          </button>
           {selectMode ? (
             <>
               <button
@@ -248,7 +241,7 @@ export default function AnalyzedJobsPage() {
               <CardWrapper
                 key={analysis.id}
                 {...(cardProps as React.ComponentProps<typeof CardWrapper>)}
-                className={`block rounded-lg border-2 p-4 hover:shadow-md transition-all cursor-pointer ${getCardStyle(analysis.matching_score)} ${isSelected ? "ring-2 ring-blue-500 ring-offset-2" : ""}`}
+                className={`block rounded-lg border-2 p-4 hover:shadow-md transition-all cursor-pointer ${getScoreCardStyle(analysis.matching_score)} ${isSelected ? "ring-2 ring-blue-500 ring-offset-2" : ""}`}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -271,6 +264,11 @@ export default function AnalyzedJobsPage() {
                       {analysis.matching_score}%
                     </span>
                     {getStatusIcon(analysis.eligibility_status)}
+                    {analysis.offers_sponsorship && (
+                      <span title="This job offers sponsorship!">
+                        <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
+                      </span>
+                    )}
                   </div>
                   {!selectMode && (
                     <button
@@ -292,7 +290,7 @@ export default function AnalyzedJobsPage() {
                 </h3>
                 <p className="text-gray-600 text-sm mb-2">{analysis.company_name}</p>
                 <div className="flex items-center gap-2">
-                  <p className="text-gray-400 text-xs">{formatDate(analysis.last_analyzed_at)}</p>
+                  <p className="text-gray-400 text-xs">{formatDateTime(analysis.last_analyzed_at)}</p>
                   {analysis.applied && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
                       Applied

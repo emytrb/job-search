@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
+    job_title: str = Field(..., min_length=1)
+    company_name: str = Field(..., min_length=1)
     job_text: str = Field(..., min_length=100)
     job_url: str = Field(..., min_length=1)
 
@@ -43,7 +45,7 @@ class SavedAnalysisResponse(BaseModel):
     job_title: str
     company_name: str
     job_description: str
-    job_url: str
+    job_url: Optional[str] = None
     eligibility_status: str
     eligibility_reasons: list[str]
     matching_score: int
@@ -54,6 +56,7 @@ class SavedAnalysisResponse(BaseModel):
     cover_letter: str
     processing_time_ms: int
     llm_model: str | None = None
+    offers_sponsorship: bool = False
     applied: bool = False
     created_at: datetime
     last_analyzed_at: datetime
@@ -68,6 +71,7 @@ class SavedAnalysisListItem(BaseModel):
     company_name: str
     eligibility_status: str
     matching_score: int
+    offers_sponsorship: bool = False
     applied: bool = False
     created_at: datetime
     last_analyzed_at: datetime
@@ -95,8 +99,8 @@ class QueueItemResponse(BaseModel):
     retry_count: int = 0
     max_retries: int = 3
     saved_analysis_id: Optional[int] = None
-    job_title: Optional[str] = None  # From saved analysis if completed
-    company_name: Optional[str] = None  # From saved analysis if completed
+    job_title: str
+    company_name: str
     matching_score: Optional[int] = None  # From saved analysis if completed
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -127,3 +131,15 @@ class RequeueRequest(BaseModel):
 class RequeueResponse(BaseModel):
     queued_count: int
     queue_items: list[QueueAddResponse]
+
+
+class CheckDuplicateRequest(BaseModel):
+    job_text: str = Field(..., min_length=100)
+
+
+class DuplicateCheckResponse(BaseModel):
+    is_duplicate: bool
+    similarity_score: float = 0.0
+    matched_analysis_id: Optional[int] = None
+    matched_job_title: Optional[str] = None
+    matched_company_name: Optional[str] = None

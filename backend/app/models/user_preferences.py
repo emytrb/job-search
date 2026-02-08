@@ -20,6 +20,9 @@ class UserPreferences(Base):
     ats_guidelines = Column(Text, default="")
     job_requirements_context = Column(Text, default="")
     cover_letter_guidelines = Column(Text, default="")
+    similarity_threshold = Column(Integer, default=90)
+    sponsorship_bonus_threshold = Column(Integer, default=50)
+    stale_task_timeout_minutes = Column(Integer, default=10)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -11,6 +11,7 @@ from app.models.analysis_queue import AnalysisQueueItem, QueueItemStatus
 from app.models.saved_analysis import SavedAnalysis
 from app.models.user_preferences import UserPreferences
 from llm.client import llm_client
+from app.utils.simhash import compute_simhash
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,13 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                 cover_letter_guidelines=prefs.cover_letter_guidelines or "",
             )
 
+            # Apply sponsorship bonus
+            offers_sponsorship = analysis.offers_sponsorship
+            final_score = analysis.matching_score
+            threshold = prefs.sponsorship_bonus_threshold if prefs.sponsorship_bonus_threshold is not None else 50
+            if offers_sponsorship and final_score >= threshold:
+                final_score = min(final_score + 20, 100)
+
             # Check if this is a requeue (overwrite mode)
             if queue_item.saved_analysis_id:
                 # UPDATE existing SavedAnalysis
@@ -68,14 +76,15 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
 
                 if saved_analysis:
                     # Update existing record (preserve created_at)
-                    saved_analysis.job_title = analysis.job_summary.title
-                    saved_analysis.company_name = analysis.job_summary.company
+                    saved_analysis.job_title = queue_item.job_title
+                    saved_analysis.company_name = queue_item.company_name
                     saved_analysis.job_description = queue_item.job_text
                     saved_analysis.job_url = queue_item.job_url
                     saved_analysis.eligibility_status = analysis.eligibility_status
                     saved_analysis.eligibility_reasons = analysis.eligibility_reasons
-                    saved_analysis.matching_score = analysis.matching_score
+                    saved_analysis.matching_score = final_score
                     saved_analysis.matching_explanation = analysis.matching_explanation
+                    saved_analysis.offers_sponsorship = offers_sponsorship
                     saved_analysis.key_requirements = analysis.job_summary.key_requirements
                     saved_analysis.resume_suggestions = [
                         {"section": s.section, "suggestion": s.suggestion, "reason": s.reason}
@@ -89,18 +98,20 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                     saved_analysis.processing_time_ms = analysis.processing_time_ms
                     saved_analysis.llm_model = analysis.model_used
                     saved_analysis.last_analyzed_at = datetime.now(timezone.utc)
+                    saved_analysis.description_simhash = compute_simhash(queue_item.job_text)
                     logger.info(f"Updated existing SavedAnalysis {saved_analysis.id}")
                 else:
                     # Fallback: create new if original was deleted
                     saved_analysis = SavedAnalysis(
-                        job_title=analysis.job_summary.title,
-                        company_name=analysis.job_summary.company,
+                        job_title=queue_item.job_title,
+                        company_name=queue_item.company_name,
                         job_description=queue_item.job_text,
                         job_url=queue_item.job_url,
                         eligibility_status=analysis.eligibility_status,
                         eligibility_reasons=analysis.eligibility_reasons,
-                        matching_score=analysis.matching_score,
+                        matching_score=final_score,
                         matching_explanation=analysis.matching_explanation,
+                        offers_sponsorship=offers_sponsorship,
                         key_requirements=analysis.job_summary.key_requirements,
                         resume_suggestions=[
                             {"section": s.section, "suggestion": s.suggestion, "reason": s.reason}
@@ -113,6 +124,7 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                         cover_letter=analysis.cover_letter,
                         processing_time_ms=analysis.processing_time_ms,
                         llm_model=analysis.model_used,
+                        description_simhash=compute_simhash(queue_item.job_text),
                     )
                     db.add(saved_analysis)
                     await db.flush()
@@ -121,14 +133,15 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
             else:
                 # CREATE new SavedAnalysis (existing behavior)
                 saved_analysis = SavedAnalysis(
-                    job_title=analysis.job_summary.title,
-                    company_name=analysis.job_summary.company,
+                    job_title=queue_item.job_title,
+                    company_name=queue_item.company_name,
                     job_description=queue_item.job_text,
                     job_url=queue_item.job_url,
                     eligibility_status=analysis.eligibility_status,
                     eligibility_reasons=analysis.eligibility_reasons,
-                    matching_score=analysis.matching_score,
+                    matching_score=final_score,
                     matching_explanation=analysis.matching_explanation,
+                    offers_sponsorship=offers_sponsorship,
                     key_requirements=analysis.job_summary.key_requirements,
                     resume_suggestions=[
                         {"section": s.section, "suggestion": s.suggestion, "reason": s.reason}
@@ -141,14 +154,14 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
                     cover_letter=analysis.cover_letter,
                     processing_time_ms=analysis.processing_time_ms,
                     llm_model=analysis.model_used,
+                    description_simhash=compute_simhash(queue_item.job_text),
                 )
                 db.add(saved_analysis)
                 await db.flush()
                 queue_item.saved_analysis_id = saved_analysis.id
 
-            # Update queue item
-            queue_item.status = QueueItemStatus.COMPLETED.value
-            queue_item.completed_at = datetime.now(timezone.utc)
+            # Remove completed item from queue
+            await db.delete(queue_item)
             await db.commit()
 
             logger.info(f"Queue item {queue_item_id} completed successfully")
@@ -209,3 +222,36 @@ async def _process_queue_item_async(queue_item_id: int) -> dict:
 @celery_app.task(name="workers.tasks.analyzer_queue.process_queue_item")
 def process_queue_item(queue_item_id: int) -> dict:
     return asyncio.run(_process_queue_item_async(queue_item_id))
+
+
+async def _recover_stale_tasks_async():
+    """Detect and reset queue items stuck in processing."""
+    AsyncSessionLocal = get_async_session()
+    async with AsyncSessionLocal() as db:
+        prefs_query = select(UserPreferences).limit(1)
+        prefs_result = await db.execute(prefs_query)
+        prefs = prefs_result.scalar_one_or_none()
+        timeout_minutes = prefs.stale_task_timeout_minutes if prefs and prefs.stale_task_timeout_minutes else 10
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+        stale_query = select(AnalysisQueueItem).where(
+            AnalysisQueueItem.status == QueueItemStatus.PROCESSING.value,
+            AnalysisQueueItem.started_at < cutoff,
+        )
+        result = await db.execute(stale_query)
+        stale_items = result.scalars().all()
+
+        for item in stale_items:
+            logger.warning(f"Resetting stale queue item {item.id} (processing since {item.started_at})")
+            item.status = QueueItemStatus.PENDING.value
+            item.started_at = None
+            item.celery_task_id = None
+
+        if stale_items:
+            await db.commit()
+            logger.info(f"Recovered {len(stale_items)} stale queue items")
+
+
+@celery_app.task(name="workers.tasks.analyzer_queue.recover_stale_tasks")
+def recover_stale_tasks():
+    return asyncio.run(_recover_stale_tasks_async())

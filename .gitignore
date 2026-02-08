@@ -147,3 +147,4 @@ exports/
 tmp/
 temp/
 .tmp/
+.claude/settings.local.json

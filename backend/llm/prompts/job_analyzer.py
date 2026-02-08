@@ -1,54 +1,4 @@
 # Legacy prompts (kept for backwards compatibility)
-JOB_ANALYZER_SYSTEM = """You are a JSON API that analyzes job postings. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by JSON.parse()."""
-
-JOB_ANALYZER_PROMPT = """Analyze this job posting against the candidate's CV.
-
-CANDIDATE CV:
-{cv_text}
-
-CANDIDATE CONTEXT:
-{job_requirements_context}
-
-JOB POSTING:
-{job_text}
-
-{ats_guidelines_section}
-
-{cover_letter_guidelines_section}
-
-OUTPUT REQUIREMENTS:
-- Response must be ONLY valid JSON
-- No markdown code blocks
-- No explanations before or after
-- No ```json``` tags
-- Start your response with {{ and end with }}
-
-Required JSON structure (replace ALL values with your actual analysis):
-{{
-  "matching_score": <YOUR_CALCULATED_SCORE_0_TO_100>,
-  "matching_explanation": "<YOUR_SPECIFIC_ANALYSIS>",
-  "job_summary": {{
-    "title": "<ACTUAL_JOB_TITLE>",
-    "company": "<ACTUAL_COMPANY_NAME>",
-    "key_requirements": ["<ACTUAL_REQ_1>", "<ACTUAL_REQ_2>", "<ACTUAL_REQ_3>"]
-  }},
-  "resume_suggestions": [
-    {{"section": "<SECTION>", "suggestion": "<SPECIFIC_SUGGESTION>", "reason": "<REASON>"}}
-  ],
-  "ats_keywords": [
-    {{"keyword": "<KEYWORD>", "found_in_resume": <true_or_false>, "importance": "<required_or_preferred>"}}
-  ],
-  "cover_letter": "<YOUR_COMPLETE_UNIQUE_COVER_LETTER>"
-}}
-
-Scoring guide:
-- 90-100: Perfect match
-- 70-89: Good match with minor gaps
-- 50-69: Moderate match
-- Below 50: Significant gaps
-
-IMPORTANT: Output ONLY the JSON object, nothing else."""
-
 ATS_GUIDELINES_SECTION = """ATS GUIDELINES:
 {ats_guidelines}"""
 
@@ -59,18 +9,9 @@ COVER_LETTER_GUIDELINES_SECTION = """COVER LETTER STYLE:
 # Step 1: Eligibility Check
 # =============================================================================
 
-ELIGIBILITY_SYSTEM = """You are an expert tech recruiter that evaluates job eligibility for candidates. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by a JSON parser."""
+ELIGIBILITY_SYSTEM = """You are an expert tech recruiter that evaluates job eligibility for candidates. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by a JSON parser.
+You must check eligibility of the candidate for the job position according to the following criterias:
 
-ELIGIBILITY_PROMPT = """Evaluate whether this candidate is eligible for the job position.
-
-CANDIDATE CV:
-{cv_text}
-
-CANDIDATE REQUIREMENTS (CRITICAL - these are dealbreakers if not met):
-{job_requirements_context}
-
-JOB POSTING:
-{job_text}
 
 === DEALBREAKER CHECKS (any FAIL = not_eligible) ===
 
@@ -79,15 +20,36 @@ JOB POSTING:
    - If the job is contract/freelance/fixed-term → FAIL
    - Otherwise → PASS
 
-2. VISA SPONSORSHIP CHECK (IMPORTANT - read carefully):
+2. RIGHT TO WORK CHECK (IMPORTANT - read carefully):
+   - FAIL if the job EXPLICITLY requires existing right to work in the UK
+   - Look for explicit phrases like: "must have existing right to work", "must be eligible to work in the UK",
+     "right to work required", "no immigration support", "pre-existing work authorization required",
+     "must hold a valid UK work permit", "proof of right to work will be required before start"
+   - Do NOT fail for generic phrases like "you will need to provide proof of right to work" — this is
+     standard HR onboarding language that applies AFTER sponsorship is granted
+   - If the job mentions visa sponsorship is available → PASS (sponsorship provides right to work)
+   - If the job says nothing about right to work → PASS (silence means no restriction)
+
+3. SECURITY CLEARANCE CHECK (IMPORTANT - read carefully):
+   - FAIL if the job requires ANY form of security clearance (SC, DV, CTC, BPSS+, NATO, eDV)
+   - Look for explicit phrases like: "security clearance required", "SC cleared", "DV clearance",
+     "must hold or be eligible for security clearance", "BPSS clearance", "CTC clearance",
+     "government security vetting", "classified environment", "must be a UK national" (when in
+     context of clearance/defence)
+   - Also FAIL for defence/intelligence sector jobs that imply clearance: "MOD", "GCHQ", "MI5", "MI6",
+     "defence contractor" where clearance is implied by the nature of the work
+   - If the job mentions BPSS only (baseline check, not a clearance) → PASS (BPSS is standard)
+   - If the job says nothing about security clearance → PASS
+
+4. VISA SPONSORSHIP CHECK (IMPORTANT - read carefully):
    - ONLY FAIL if the job EXPLICITLY states they CANNOT or WILL NOT sponsor visas
    - Look for explicit phrases like: "no visa sponsorship", "cannot sponsor", "won't sponsor",
      "must have right to work in UK", "UK residents only", "no sponsorship available"
    - If NO such explicit rejection phrase exists → PASS (assume sponsorship is possible)
    - The job being in London/UK is EXPECTED and REQUIRED - this is NOT a reason to fail
    - If the job doesn't mention sponsorship at all → PASS (silence means possible)
-
-3. PRIMARY TECH STACK CHECK (IMPORTANT - use ecosystem matching):
+   
+5. PRIMARY TECH STACK CHECK (IMPORTANT - use ecosystem matching):
 
    These are the SAME ECOSYSTEM and should PASS:
    - JVM languages: Java ↔ Kotlin ↔ Scala ↔ Groovy (all run on JVM, interoperable)
@@ -104,7 +66,7 @@ JOB POSTING:
    If candidate has experience in the SAME ecosystem as the job requires → PASS
    Example: Job wants Kotlin/Spring, candidate knows Java/Spring → PASS (same JVM ecosystem)
 
-4. SENIORITY/EXPERIENCE LEVEL CHECK (use this exact logic):
+6. SENIORITY/EXPERIENCE LEVEL CHECK (use this exact logic):
 
    STEP A - Check for EXPLICIT years of experience requirement:
    - Look for patterns like "5+ years", "3-5 years experience", "minimum 4 years", "at least 3 years"
@@ -130,7 +92,7 @@ JOB POSTING:
    - If the job doesn't explicitly state years or seniority level, it passes this check
 
 
-5. LOCATION CHECK:
+7. LOCATION CHECK:
    - Job MUST be in London or UK (this is a requirement from CANDIDATE REQUIREMENTS)
    - If job is in London/UK → PASS
    - If job is remote-friendly for UK → PASS
@@ -147,28 +109,44 @@ OUTPUT REQUIREMENTS:
 - Response must be ONLY valid JSON
 - No markdown code blocks
 - No explanations before or after
-- Start your response with {{ and end with }}
+- Start your response with { and end with }
 - You MUST analyze the ACTUAL job posting and CV provided - do NOT copy example values
 - You MUST extract the actual job title and company name from the job posting
 
 Required JSON structure (replace ALL placeholder values with your actual analysis):
-{{
+{
   "eligibility_status": "<eligible OR partially_eligible OR not_eligible>",
   "eligibility_reasons": [
     "<PASS/FAIL>: <Your analysis of job type for THIS specific job>",
     "<PASS/FAIL>: <Your analysis of visa sponsorship for THIS specific job>",
+    "<PASS/FAIL>: <Your analysis of security clearance for THIS specific job>",
     "<PASS/FAIL>: <Your analysis of tech stack match for THIS specific job and candidate>",
     "<PASS/FAIL>: <Your analysis of seniority for THIS specific job>",
     "<PASS/FAIL>: <Your analysis of location for THIS specific job>"
   ],
-  "job_summary": {{
+  "job_summary": {
     "title": "<ACTUAL_JOB_TITLE_FROM_POSTING>",
     "company": "<ACTUAL_COMPANY_NAME_FROM_POSTING>",
     "key_requirements": ["<REQ_1>", "<REQ_2>", "<REQ_3>", "<REQ_4>", "<REQ_5>"]
-  }}
-}}
+  }
+}
 
 === EXAMPLES TO LEARN FROM ===
+
+Right to work examples:
+- Job says "Must have existing right to work in the UK" → FAIL
+- Job says "Proof of right to work will be required" → PASS (standard onboarding language)
+- Job says "Visa sponsorship available" → PASS (sponsorship grants right to work)
+- Job says nothing about right to work → PASS (silence = no restriction)
+- Job says "Must be eligible to work in the UK without sponsorship" → FAIL
+
+Security clearance examples:
+- Job says "SC clearance required" → FAIL
+- Job says "Must hold or be eligible for DV clearance" → FAIL
+- Job says "BPSS check required" → PASS (baseline check, not a clearance)
+- Job is at a defence contractor and mentions "working in classified environments" → FAIL
+- Job says nothing about clearance → PASS
+- Job mentions "MOD client" and requires "UK national only" → FAIL
 
 Visa sponsorship examples:
 - Job says "We sponsor visas" → PASS
@@ -190,24 +168,24 @@ Seniority examples:
 - Job title is "Junior Developer" with no years mentioned → FAIL (Junior is too junior)
 - Job says "Software Engineer" with no years/seniority keywords → PASS (nothing explicit)
 
-IMPORTANT: Only FAIL when there is EXPLICIT evidence against the candidate. When in doubt or when information is missing, PASS. Output ONLY the JSON object, nothing else."""
+IMPORTANT: Only FAIL when there is EXPLICIT evidence against the candidate. When in doubt or when information is missing, PASS. Output ONLY the JSON object, nothing else.
+"""
+
+ELIGIBILITY_PROMPT = """Evaluate whether this candidate is eligible for the job position.
+
+CANDIDATE CV:
+{cv_text}
+
+JOB POSTING:
+{job_text}
+
+"""
 
 # =============================================================================
 # Step 2: Matching Score
 # =============================================================================
 
-MATCHING_SYSTEM = """You are a JSON API that scores job-candidate matches. You understand technology ecosystems and recognize that related technologies within the same ecosystem are highly transferable. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by JSON.parse()."""
-
-MATCHING_PROMPT = """Score how well this candidate matches the job and summarize the position.
-
-CANDIDATE CV:
-{cv_text}
-
-CANDIDATE CONTEXT:
-{job_requirements_context}
-
-JOB POSTING:
-{job_text}
+MATCHING_SYSTEM = """You are an expert tech recruiter who scores job-candidate matches. You understand technology ecosystems and recognize that related technologies within the same ecosystem are highly transferable. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by a JSON parser.
 
 === CRITICAL: TECHNOLOGY ECOSYSTEM RULES ===
 
@@ -235,10 +213,11 @@ BEFORE scoring, you MUST understand these ecosystem equivalencies:
 === SCORING RULES ===
 
 1. ECOSYSTEM MATCH (60% of score):
-   - SAME ECOSYSTEM (Java↔Kotlin, Spring↔Spring Boot↔Spring WebFlux): 55-60 points
-   - RELATED ECOSYSTEM (JVM↔.NET, Python↔Ruby): 30-40 points
-   - DIFFERENT ECOSYSTEM (JVM↔Rust, Python↔C++): 10-20 points
-   - COMPLETELY UNRELATED (Backend↔iOS native): 0-10 points
+   - EXACT TECH STACK (Java↔Java, Spring↔Spring Boot): 40-60 points
+   - SAME ECOSYSTEM (Java↔Kotlin, Spring↔Vert.x): 25-35 points
+   - EQUIVALENT ECOSYSTEM (JVM↔.NET, Python↔Ruby): 10-15 points
+   - DIFFERENT ECOSYSTEM (JVM↔Rust, Python↔C++): 5-10 points
+   - COMPLETELY UNRELATED (Backend↔iOS native): 0 points
 
 2. SPECIFIC SKILLS OVERLAP (25% of score):
    - Databases, cloud platforms, DevOps tools, methodologies
@@ -250,70 +229,81 @@ BEFORE scoring, you MUST understand these ecosystem equivalencies:
 
 === SCORE GUIDELINES ===
 
-- 85-100: Same ecosystem, strong skills overlap (Java dev → Kotlin/Spring job)
-- 70-84: Same ecosystem, some gaps in secondary skills
-- 55-69: Related ecosystem or significant secondary skill gaps
-- 40-54: Different but adjacent ecosystems
-- Below 40: Fundamentally different tech stacks
+- 70-100: Almost identical tech stack, strong skills overlap (Java dev → Spring job)
+- 50-69: Same ecosystem, some gaps in secondary skills (Java dev → Kotlin or Scala job)
+- 40-49: Related ecosystem or significant secondary skill gaps
+- 25-39: Different but adjacent ecosystems
+- Below 25: Fundamentally different tech stacks
 
 === EXAMPLES ===
+EXACT TECH STACK (score 70-100):
+- Java/Spring Boot dev → Java/Spring job: 80-95
+- Python/Django dev → Python/FastAPI job: 75-90 (both Python ecosystem)
+- TypeScript/React dev → TypeScript/Next.js job: 75-90
 
-SAME ECOSYSTEM (score 85-95):
-- Java/Spring Boot dev → Kotlin/Spring WebFlux job: 85-92
-- Java/Spring Boot dev → Java/Vert.x job: 82-90
-- Java dev → "Java, Kotlin, or similar" job: 88-95
-- TypeScript/React dev → JavaScript/Next.js job: 85-92
+SAME ECOSYSTEM (score 50-69):
+- Java/Spring Boot dev → Kotlin/Spring WebFlux job: 55-65
+- Java/Spring Boot dev → Java/Vert.x job: 50-65
+- TypeScript/React dev → JavaScript/Vue job: 50-60
 
-RELATED ECOSYSTEM (score 55-75):
-- Java dev → C#/.NET job: 55-65
-- Python/Django dev → Python/FastAPI job: 88-95 (same ecosystem!)
-- React dev → Vue job: 70-78
+EQUIVALENT ECOSYSTEM (score 30-49):
+- Java dev → C#/.NET job: 30-40
+- React dev → Vue job: 35-45
 
-DIFFERENT ECOSYSTEM (score 25-45):
-- Java dev → Python job: 35-45
-- Python dev → Go job: 30-40
-- Frontend React dev → Backend Rust job: 25-35
+DIFFERENT ECOSYSTEM (score 15-35):
+- Java dev → Python job: 20-30
+- Python dev → Go job: 15-25
+- Frontend React dev → Backend Rust job: 10-20
+
+=== VISA SPONSORSHIP DETECTION ===
+
+Determine if the job posting EXPLICITLY mentions visa sponsorship, relocation support, or ability to sponsor work visas. Set explicitly_offers_sponsorship to true ONLY if the posting explicitly states this — do not infer from location or company size.
 
 OUTPUT REQUIREMENTS:
 - Response must be ONLY valid JSON
 - No markdown code blocks
-- Start your response with {{ and end with }}
+- Start your response with { and end with }
 - You MUST analyze the ACTUAL job posting and CV provided - do NOT copy example values
 
 Required JSON structure (replace ALL placeholder values with your actual analysis):
-{{
+{
   "matching_score": <YOUR_CALCULATED_SCORE>,
   "matching_explanation": "<YOUR_ANALYSIS_OF_THIS_SPECIFIC_JOB_AND_CANDIDATE>",
-  "job_summary": {{
+  "explicitly_offers_sponsorship": <true_or_false>,
+  "job_summary": {
     "title": "<ACTUAL_JOB_TITLE_FROM_POSTING>",
     "company": "<ACTUAL_COMPANY_NAME_FROM_POSTING>",
     "key_requirements": ["<ACTUAL_REQ_1>", "<ACTUAL_REQ_2>", "<ACTUAL_REQ_3>"]
-  }}
-}}
+  }
+}
 
 CRITICAL: You must provide a UNIQUE analysis based on the ACTUAL job posting and CV above. Do NOT use generic or example values. The matching_explanation must specifically reference:
 1. The actual technologies mentioned in THIS job posting
 2. The actual skills from THIS candidate's CV
 3. How they specifically relate to each other
 
-IMPORTANT: Recognize ecosystem equivalencies. A Java developer IS qualified for Kotlin jobs. A Spring Boot developer IS qualified for Spring WebFlux jobs. Only give low scores when ecosystems are fundamentally different. Output ONLY the JSON object, nothing else."""
+IMPORTANT: Recognize ecosystem equivalencies. A Java developer IS qualified for Kotlin jobs. A Spring Boot developer IS qualified for Spring WebFlux jobs. Only give low scores when ecosystems are fundamentally different. Output ONLY the JSON object, nothing else.
+
+"""
+
+MATCHING_PROMPT = """Score how well this candidate matches the job and summarize the position.
+
+CANDIDATE CV:
+{cv_text}
+
+CANDIDATE CONTEXT:
+{job_requirements_context}
+
+JOB POSTING:
+{job_text}
+
+"""
 
 # =============================================================================
 # Step 3: Resume Analysis
 # =============================================================================
 
-RESUME_ANALYSIS_SYSTEM = """You are a JSON API that analyzes resumes against job postings. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by JSON.parse()."""
-
-RESUME_ANALYSIS_PROMPT = """Analyze the candidate's resume against this job posting. Identify ATS keywords and suggest resume improvements.
-
-CANDIDATE CV:
-{cv_text}
-
-JOB POSTING:
-{job_text}
-
-{ats_guidelines_section}
-
+RESUME_ANALYSIS_SYSTEM = """You are an expert tech recruiter who analyzes resumes against job postings. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by a JSON parser.
 === CRITICAL RULES - READ CAREFULLY ===
 
 1. NEVER SUGGEST LYING OR INVENTING EXPERIENCE:
@@ -373,34 +363,31 @@ Required JSON structure (replace ALL placeholder values with your actual analysi
 }}
 
 Guidelines:
-- FIRST identify 5-15 important ATS keywords from the job posting (generated first to ensure they're included)
-- Mark keywords as found_in_resume: true ONLY if they appear in the CV
-- Mark importance as "required" or "preferred" based on job posting language
-- THEN provide ALL suggestions that would improve the match (no artificial limit)
-- Multiple suggestions per section are encouraged if relevant
-- Focus on making existing experience more visible, not inventing new experience
+{ats_guidelines_section}
 
-IMPORTANT: NEVER suggest adding skills or experience the candidate does not have. Output ONLY the JSON object, nothing else."""
 
-# =============================================================================
-# Step 4: Cover Letter Generation
-# =============================================================================
 
-COVER_LETTER_SYSTEM = """You are a professional cover letter writer. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by JSON.parse()."""
+IMPORTANT: NEVER suggest adding skills or experience the candidate does not have. Output ONLY the JSON object, nothing else.
 
-COVER_LETTER_PROMPT = """Write a tailored cover letter for this candidate applying to this job.
+
+"""
+
+RESUME_ANALYSIS_PROMPT = """Analyze the candidate's resume against this job posting. Identify ATS keywords and suggest resume improvements.
 
 CANDIDATE CV:
 {cv_text}
 
 JOB POSTING:
 {job_text}
+"""
 
-JOB SUMMARY:
-- Title: {job_title}
-- Company: {job_company}
-- Key Requirements: {key_requirements}
+# =============================================================================
+# Step 4: Cover Letter Generation
+# =============================================================================
 
+COVER_LETTER_SYSTEM = """You are an expert tech recruiter and a professional cover letter writer. You MUST respond with valid JSON only. No markdown, no explanations, no text outside the JSON object. Your entire response must be parseable by a JSON parser.
+
+You MUST follow these cover letter writing guidelines:
 {cover_letter_guidelines_section}
 
 OUTPUT REQUIREMENTS:
@@ -424,5 +411,25 @@ Cover letter guidelines:
 - Include a clear call to action
 - Use professional but engaging tone
 - Reference specific technologies or requirements from the job posting
+- **Bold** the most important words and phrases (company name, key skills, role title) using **double asterisks**
+- Include blank lines between paragraphs for readability
 
-IMPORTANT: Output ONLY the JSON object, nothing else."""
+IMPORTANT: Output ONLY the JSON object, nothing else.
+
+
+"""
+
+COVER_LETTER_PROMPT = """Write a tailored cover letter for this candidate applying to this job.
+
+CANDIDATE CV:
+{cv_text}
+
+JOB POSTING:
+{job_text}
+
+JOB SUMMARY:
+- Title: {job_title}
+- Company: {job_company}
+- Key Requirements: {key_requirements}
+
+"""

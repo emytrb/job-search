@@ -60,6 +60,7 @@ class MatchingResult:
     score: int
     explanation: str
     job_summary: JobSummary
+    offers_sponsorship: bool
 
 
 @dataclass
@@ -81,6 +82,7 @@ class JobOfferAnalysis:
     raw_response: dict
     model_used: str
     processing_time_ms: int
+    offers_sponsorship: bool
 
 
 class LLMClient:
@@ -115,7 +117,9 @@ class LLMClient:
         # Default wait time if retry-after header is missing
         self.default_retry_wait = 5
 
-        logger.info(f"LLM client initialized with provider={self.provider}, model={self.model}")
+        logger.info(
+            f"LLM client initialized with provider={self.provider}, model={self.model}"
+        )
 
     def _get_completion_kwargs(self, **kwargs):
         """Build completion kwargs with appropriate auth for the provider."""
@@ -136,31 +140,16 @@ class LLMClient:
         - x-ratelimit-remaining-tokens: 17997
         """
         try:
-            # LiteLLM exposes response headers in llm_provider_response_headers
-            if hasattr(error, 'llm_provider_response_headers') and error.llm_provider_response_headers:
-                headers = error.llm_provider_response_headers
-                retry_after = headers.get('retry-after') or headers.get('Retry-After')
+            # LiteLLM exposes Groq response headers in litellm_response_headers
+            if (
+                hasattr(error, "litellm_response_headers")
+                and error.litellm_response_headers
+            ):
+                headers = error.litellm_response_headers
+                retry_after = headers.get("retry-after")
                 if retry_after:
-                    logger.info(f"Found retry-after header: {retry_after}")
+                    logger.info(f"Found retry-after header: {retry_after}s")
                     return float(retry_after)
-
-            # Try to get from response object if available
-            if hasattr(error, 'response') and error.response:
-                if hasattr(error.response, 'headers'):
-                    headers = error.response.headers
-                    retry_after = headers.get('retry-after') or headers.get('Retry-After')
-                    if retry_after:
-                        logger.info(f"Found retry-after in response headers: {retry_after}")
-                        return float(retry_after)
-
-            # Try to parse from error message (fallback)
-            error_str = str(error)
-            # Look for patterns like "retry after 2 seconds" or "retry-after: 2"
-            match = re.search(r'retry[_\-\s]?after[:\s]+(\d+(?:\.\d+)?)', error_str, re.IGNORECASE)
-            if match:
-                retry_after = float(match.group(1))
-                logger.info(f"Parsed retry-after from error message: {retry_after}")
-                return retry_after
 
             return None
 
@@ -178,13 +167,32 @@ class LLMClient:
 
         while True:
             try:
-                return await litellm.acompletion(**self._get_completion_kwargs(**kwargs))
+                return await litellm.acompletion(
+                    **self._get_completion_kwargs(**kwargs)
+                )
 
             except RateLimitError as e:
                 retries += 1
 
                 if retries > self.max_rate_limit_retries:
-                    logger.error(f"Max rate limit retries ({self.max_rate_limit_retries}) exceeded")
+                    logger.error(
+                        f"Max rate limit retries ({self.max_rate_limit_retries}) exceeded"
+                    )
+                    raise
+
+                # Check if Groq says not to retry (e.g. daily token limit exhausted)
+                should_retry = True
+                if (
+                    hasattr(e, "litellm_response_headers")
+                    and e.litellm_response_headers
+                ):
+                    if e.litellm_response_headers.get("x-should-retry") == "false":
+                        should_retry = False
+
+                if not should_retry:
+                    logger.error(
+                        "Groq x-should-retry=false (daily limit likely exhausted), not retrying"
+                    )
                     raise
 
                 # Parse retry-after from Groq's response headers
@@ -192,7 +200,9 @@ class LLMClient:
 
                 if retry_after is None:
                     # Fallback: exponential backoff if header not available
-                    retry_after = min(60, self.default_retry_wait * (2 ** (retries - 1)))
+                    retry_after = min(
+                        60, self.default_retry_wait * (2 ** (retries - 1))
+                    )
                     logger.warning(
                         f"No retry-after header found, using fallback: {retry_after}s"
                     )
@@ -211,7 +221,9 @@ class LLMClient:
             # Strip <think>...</think> blocks (used by reasoning models)
             if "<think>" in json_match:
                 logger.info("Stripping <think> block from response")
-                json_match = re.sub(r'<think>.*?</think>', '', json_match, flags=re.DOTALL)
+                json_match = re.sub(
+                    r"<think>.*?</think>", "", json_match, flags=re.DOTALL
+                )
                 logger.info(f"After stripping think block: {json_match[:500]}")
 
             if "```json" in json_match:
@@ -220,6 +232,11 @@ class LLMClient:
                 json_match = json_match.split("```")[1].split("```")[0]
 
             json_match = json_match.strip()
+
+            # Strip extra leading/trailing braces (LLM mimics {{ }} from prompt escaping)
+            while json_match.startswith("{{") and json_match.endswith("}}"):
+                json_match = json_match[1:-1]
+
             logger.info(f"Attempting to parse JSON: {json_match[:300]}...")
             return json.loads(json_match)
         except json.JSONDecodeError as e:
@@ -244,15 +261,15 @@ class LLMClient:
 
             # Try adding missing closing characters
             # Count open/close braces and brackets
-            open_braces = json_match.count('{') - json_match.count('}')
-            open_brackets = json_match.count('[') - json_match.count(']')
+            open_braces = json_match.count("{") - json_match.count("}")
+            open_brackets = json_match.count("[") - json_match.count("]")
 
             # Check if we're inside a string (unclosed quote)
             # Simple heuristic: odd number of unescaped quotes
             in_string = False
             i = 0
             while i < len(json_match):
-                if json_match[i] == '"' and (i == 0 or json_match[i-1] != '\\'):
+                if json_match[i] == '"' and (i == 0 or json_match[i - 1] != "\\"):
                     in_string = not in_string
                 i += 1
 
@@ -261,8 +278,8 @@ class LLMClient:
                 json_match += '"'
 
             # Add missing closing characters
-            json_match += ']' * open_brackets
-            json_match += '}' * open_braces
+            json_match += "]" * open_brackets
+            json_match += "}" * open_braces
 
             result = json.loads(json_match)
             logger.info("Successfully fixed truncated JSON")
@@ -287,7 +304,6 @@ class LLMClient:
 
         prompt = ELIGIBILITY_PROMPT.format(
             cv_text=cv_text[:10000],
-            job_requirements_context=job_requirements_context or "No additional context provided.",
             job_text=job_text[:10000],
         )
 
@@ -303,6 +319,11 @@ class LLMClient:
         content = response.choices[0].message.content
         logger.info(f"Eligibility raw response:\n{content}")
         parsed = self._parse_response(content)
+
+        # If parsing failed entirely, treat as error rather than silently defaulting
+        if not parsed or "eligibility_status" not in parsed:
+            logger.error(f"Eligibility parsing failed, got: {parsed}")
+            raise ValueError("Failed to parse eligibility response from LLM")
 
         # Parse job_summary from eligibility response
         job_summary_data = parsed.get("job_summary", {})
@@ -329,7 +350,8 @@ class LLMClient:
 
         prompt = MATCHING_PROMPT.format(
             cv_text=cv_text[:10000],
-            job_requirements_context=job_requirements_context or "No additional context provided.",
+            job_requirements_context=job_requirements_context
+            or "No additional context provided.",
             job_text=job_text[:10000],
         )
 
@@ -346,6 +368,10 @@ class LLMClient:
         logger.info(f"Matching raw response:\n{content}")
         parsed = self._parse_response(content)
 
+        if not parsed or "matching_score" not in parsed:
+            logger.error(f"Matching parsing failed, got: {parsed}")
+            raise ValueError("Failed to parse matching response from LLM")
+
         job_summary_data = parsed.get("job_summary", {})
         job_summary = JobSummary(
             title=job_summary_data.get("title", "Unknown"),
@@ -357,6 +383,7 @@ class LLMClient:
             score=parsed.get("matching_score", 50),
             explanation=parsed.get("matching_explanation", ""),
             job_summary=job_summary,
+            offers_sponsorship=parsed.get("explicitly_offers_sponsorship", False),
         )
 
     async def _analyze_resume(
@@ -373,14 +400,16 @@ class LLMClient:
             ats_section = ATS_GUIDELINES_SECTION.format(ats_guidelines=ats_guidelines)
 
         prompt = RESUME_ANALYSIS_PROMPT.format(
-            cv_text=cv_text[:10000],
-            job_text=job_text[:10000],
-            ats_guidelines_section=ats_section,
+            cv_text=cv_text[:10000], job_text=job_text[:10000]
+        )
+
+        system_prompt = RESUME_ANALYSIS_SYSTEM.format(
+            ats_guidelines_section=ats_section
         )
 
         response = await self._rate_limited_completion(
             messages=[
-                {"role": "system", "content": RESUME_ANALYSIS_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
@@ -424,13 +453,15 @@ class LLMClient:
         """Step 4: Generate tailored cover letter."""
         logger.info("Starting cover letter generation...")
 
-        cover_letter_section = ""
-        if cover_letter_guidelines.strip():
-            cover_letter_section = COVER_LETTER_GUIDELINES_SECTION.format(
-                cover_letter_guidelines=cover_letter_guidelines
-            )
+        key_requirements_str = (
+            ", ".join(job_summary.key_requirements)
+            if job_summary.key_requirements
+            else "Not specified"
+        )
 
-        key_requirements_str = ", ".join(job_summary.key_requirements) if job_summary.key_requirements else "Not specified"
+        system_prompt = COVER_LETTER_SYSTEM.format(
+            cover_letter_guidelines_section=cover_letter_guidelines
+        )
 
         prompt = COVER_LETTER_PROMPT.format(
             cv_text=cv_text[:10000],
@@ -438,12 +469,11 @@ class LLMClient:
             job_title=job_summary.title,
             job_company=job_summary.company,
             key_requirements=key_requirements_str,
-            cover_letter_guidelines_section=cover_letter_section,
         )
 
         response = await self._rate_limited_completion(
             messages=[
-                {"role": "system", "content": COVER_LETTER_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,  # Slightly higher for more creative writing
@@ -507,6 +537,7 @@ class LLMClient:
                     raw_response=all_raw_responses,
                     model_used=self.model,
                     processing_time_ms=processing_time,
+                    offers_sponsorship=False,
                 )
 
             # Step 2: Matching score
@@ -529,11 +560,19 @@ class LLMClient:
             )
             all_raw_responses["resume_analysis"] = {
                 "suggestions": [
-                    {"section": s.section, "suggestion": s.suggestion, "reason": s.reason}
+                    {
+                        "section": s.section,
+                        "suggestion": s.suggestion,
+                        "reason": s.reason,
+                    }
                     for s in resume_analysis.suggestions
                 ],
                 "ats_keywords": [
-                    {"keyword": k.keyword, "found_in_resume": k.found_in_resume, "importance": k.importance}
+                    {
+                        "keyword": k.keyword,
+                        "found_in_resume": k.found_in_resume,
+                        "importance": k.importance,
+                    }
                     for k in resume_analysis.ats_keywords
                 ],
             }
@@ -558,6 +597,7 @@ class LLMClient:
                 raw_response=all_raw_responses,
                 model_used=self.model,
                 processing_time_ms=processing_time,
+                offers_sponsorship=matching.offers_sponsorship,
             )
 
         except Exception as e:

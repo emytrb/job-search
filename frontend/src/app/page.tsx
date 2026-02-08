@@ -1,21 +1,18 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
-import { api, SavedAnalysis, UserPreferences, QueueItem } from "@/lib/api/client"
+import { api, UserPreferences, QueueItem, DuplicateCheckResponse } from "@/lib/api/client"
 import {
   Search,
-  Copy,
-  Check,
   AlertCircle,
   Loader2,
   XCircle,
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
   ListOrdered,
   X,
   RefreshCw,
+  AlertTriangle,
+  Eye,
 } from "lucide-react"
 
 function isValidUrl(url: string): boolean {
@@ -28,23 +25,21 @@ function isValidUrl(url: string): boolean {
 }
 
 export default function AnalyzerPage() {
+  const [jobTitle, setJobTitle] = useState("")
+  const [companyName, setCompanyName] = useState("")
   const [jobText, setJobText] = useState("")
   const [jobUrl, setJobUrl] = useState("")
   const [preferences, setPreferences] = useState<UserPreferences | null>(null)
   const [loadingPrefs, setLoadingPrefs] = useState(true)
-  const [copied, setCopied] = useState(false)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [duplicateCheck, setDuplicateCheck] = useState<DuplicateCheckResponse | null>(null)
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false)
 
   // Queue state from backend
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [pendingCount, setPendingCount] = useState(0)
   const [processingCount, setProcessingCount] = useState(0)
-
-  // Selected result to display
-  const [selectedAnalysis, setSelectedAnalysis] = useState<SavedAnalysis | null>(null)
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
 
   useEffect(() => {
     loadPreferences()
@@ -81,21 +76,27 @@ export default function AnalyzerPage() {
     }
   }, [])
 
+  // Clear duplicate warning when text changes
+  useEffect(() => {
+    setDuplicateCheck(null)
+  }, [jobText])
+
   const hasCV = preferences?.cv_text && preferences.cv_text.trim().length > 0
   const isUrlValid = isValidUrl(jobUrl.trim())
-  const canAnalyze = hasCV && jobText.trim().length >= 100 && isUrlValid
+  const canAnalyze = hasCV && jobTitle.trim().length > 0 && companyName.trim().length > 0 && jobText.trim().length >= 100 && isUrlValid
 
-  async function handleAnalyze() {
-    if (!canAnalyze) return
-
+  async function submitToQueue() {
     setSubmitting(true)
     setSubmitError(null)
 
     try {
-      await api.analyzer.addToQueue({ job_text: jobText, job_url: jobUrl.trim() })
-      setJobText("") // Clear input after adding to queue
-      setJobUrl("") // Clear URL after adding to queue
-      await loadQueue() // Refresh queue immediately
+      await api.analyzer.addToQueue({ job_title: jobTitle.trim(), company_name: companyName.trim(), job_text: jobText, job_url: jobUrl.trim() })
+      setJobTitle("")
+      setCompanyName("")
+      setJobText("")
+      setJobUrl("")
+      setDuplicateCheck(null)
+      await loadQueue()
     } catch (err) {
       if (err instanceof Error) {
         setSubmitError(err.message)
@@ -104,6 +105,36 @@ export default function AnalyzerPage() {
       }
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleAnalyze() {
+    if (!canAnalyze) return
+
+    // If user already saw duplicate warning and clicked "Analyze Anyway"
+    if (duplicateCheck?.is_duplicate) {
+      setDuplicateCheck(null)
+      await submitToQueue()
+      return
+    }
+
+    setCheckingDuplicate(true)
+    setSubmitError(null)
+
+    try {
+      const result = await api.analyzer.checkDuplicate(jobText)
+      if (result.is_duplicate) {
+        setDuplicateCheck(result)
+        setCheckingDuplicate(false)
+        return
+      }
+      // No duplicate — submit directly
+      setCheckingDuplicate(false)
+      await submitToQueue()
+    } catch {
+      // Fail-open: if duplicate check fails, submit anyway
+      setCheckingDuplicate(false)
+      await submitToQueue()
     }
   }
 
@@ -116,79 +147,13 @@ export default function AnalyzerPage() {
     }
   }
 
-  async function handleViewResult(item: QueueItem) {
-    if (!item.saved_analysis_id) return
-
-    setLoadingAnalysis(true)
+  async function handleRetryQueueItem(id: number) {
     try {
-      const analysis = await api.analyzer.get(item.saved_analysis_id)
-      setSelectedAnalysis(analysis)
+      await api.analyzer.retryQueueItem(id)
+      await loadQueue()
     } catch {
       // Silently fail
-    } finally {
-      setLoadingAnalysis(false)
     }
-  }
-
-  function copyToClipboard() {
-    if (selectedAnalysis?.cover_letter) {
-      navigator.clipboard.writeText(selectedAnalysis.cover_letter)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
-  function getScoreColor(score: number) {
-    if (score >= 80) return "text-green-600 bg-green-50 border-green-200"
-    if (score >= 60) return "text-yellow-600 bg-yellow-50 border-yellow-200"
-    return "text-red-600 bg-red-50 border-red-200"
-  }
-
-  function getImportanceColor(importance: string) {
-    switch (importance.toLowerCase()) {
-      case "required":
-        return "bg-red-100 text-red-700"
-      case "preferred":
-        return "bg-yellow-100 text-yellow-700"
-      default:
-        return "bg-gray-100 text-gray-700"
-    }
-  }
-
-  // Group suggestions by section
-  const groupedSuggestions = useMemo(() => {
-    if (!selectedAnalysis?.resume_suggestions) return {}
-    return selectedAnalysis.resume_suggestions.reduce(
-      (acc, suggestion) => {
-        const section = suggestion.section
-        if (!acc[section]) {
-          acc[section] = []
-        }
-        acc[section].push(suggestion)
-        return acc
-      },
-      {} as Record<string, typeof selectedAnalysis.resume_suggestions>
-    )
-  }, [selectedAnalysis?.resume_suggestions])
-
-  function toggleSection(section: string) {
-    setExpandedSections((prev) => {
-      const newSet = new Set(prev)
-      if (newSet.has(section)) {
-        newSet.delete(section)
-      } else {
-        newSet.add(section)
-      }
-      return newSet
-    })
-  }
-
-  function expandAllSections() {
-    setExpandedSections(new Set(Object.keys(groupedSuggestions)))
-  }
-
-  function collapseAllSections() {
-    setExpandedSections(new Set())
   }
 
   if (loadingPrefs) {
@@ -198,8 +163,6 @@ export default function AnalyzerPage() {
       </div>
     )
   }
-
-  const result = selectedAnalysis
 
   return (
     <div>
@@ -230,9 +193,52 @@ export default function AnalyzerPage() {
         </div>
       )}
 
+      {duplicateCheck?.is_duplicate && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-amber-800 font-medium">Similar job already analyzed</p>
+            <p className="text-amber-700 text-sm">
+              <span className="font-medium">{duplicateCheck.matched_job_title}</span>
+              {duplicateCheck.matched_company_name && (
+                <> at <span className="font-medium">{duplicateCheck.matched_company_name}</span></>
+              )}
+              {" "}&mdash; {duplicateCheck.similarity_score}% similar
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Job Title <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+              placeholder="e.g. Senior Software Engineer"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Company <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+              placeholder="e.g. Acme Inc."
+            />
+          </div>
+        </div>
+
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          Job Posting Text
+          Job Posting Text <span className="text-red-500">*</span>
         </label>
         <textarea
           value={jobText}
@@ -245,7 +251,7 @@ export default function AnalyzerPage() {
         </p>
 
         <label className="block text-sm font-medium text-gray-700 mb-2 mt-4">
-          Job Posting URL
+          Job Posting URL <span className="text-red-500">*</span>
         </label>
         <input
           type="url"
@@ -262,29 +268,63 @@ export default function AnalyzerPage() {
           <p className="text-xs text-red-500 mt-1">Please enter a valid URL</p>
         )}
 
-        <div className="flex items-center justify-end mt-4">
-          <button
-            onClick={handleAnalyze}
-            disabled={!canAnalyze || submitting}
-            className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Adding...
-              </>
-            ) : processingCount > 0 ? (
-              <>
-                <ListOrdered className="w-4 h-4" />
-                Add to Queue
-              </>
-            ) : (
-              <>
-                <Search className="w-4 h-4" />
-                Analyze
-              </>
-            )}
-          </button>
+        <div className="flex items-center justify-end gap-3 mt-4">
+          {duplicateCheck?.is_duplicate ? (
+            <>
+              <Link
+                href={`/analyzed-jobs/${duplicateCheck.matched_analysis_id}`}
+                className="border border-gray-300 text-gray-700 px-6 py-2 rounded-md hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                View Job
+              </Link>
+              <button
+                onClick={handleAnalyze}
+                disabled={submitting}
+                className="bg-amber-500 text-white px-6 py-2 rounded-md hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-4 h-4" />
+                    Analyze Anyway
+                  </>
+                )}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleAnalyze}
+              disabled={!canAnalyze || submitting || checkingDuplicate}
+              className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {checkingDuplicate ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Checking...
+                </>
+              ) : submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Adding...
+                </>
+              ) : processingCount > 0 ? (
+                <>
+                  <ListOrdered className="w-4 h-4" />
+                  Add to Queue
+                </>
+              ) : (
+                <>
+                  <Search className="w-4 h-4" />
+                  Analyze
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -314,11 +354,9 @@ export default function AnalyzerPage() {
                 className={`flex items-center justify-between p-3 rounded-lg border ${
                   item.status === "processing"
                     ? "bg-blue-50 border-blue-200"
-                    : item.status === "completed"
-                      ? "bg-green-50 border-green-200"
-                      : item.status === "failed"
-                        ? "bg-red-50 border-red-200"
-                        : "bg-gray-50 border-gray-200"
+                    : item.status === "failed"
+                      ? "bg-red-50 border-red-200"
+                      : "bg-gray-50 border-gray-200"
                 }`}
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -327,9 +365,6 @@ export default function AnalyzerPage() {
                   </span>
                   {item.status === "processing" && (
                     <Loader2 className="w-4 h-4 animate-spin text-blue-600 flex-shrink-0" />
-                  )}
-                  {item.status === "completed" && (
-                    <Check className="w-4 h-4 text-green-600 flex-shrink-0" />
                   )}
                   {item.status === "failed" && (
                     <XCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
@@ -341,15 +376,9 @@ export default function AnalyzerPage() {
                     <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
                   )}
                   <div className="min-w-0 flex-1">
-                    {item.job_title ? (
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {item.job_title} - {item.company_name}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-gray-600 truncate">
-                        {item.job_text_preview}
-                      </p>
-                    )}
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {item.job_title} - {item.company_name}
+                    </p>
                     {item.status === "processing" && (
                       <p className="text-xs text-blue-600">Analyzing...</p>
                     )}
@@ -368,29 +397,17 @@ export default function AnalyzerPage() {
                         )}
                       </p>
                     )}
-                    {item.status === "completed" && item.matching_score !== null && (
-                      <p className="text-xs text-green-600">
-                        Score: {item.matching_score}%
-                      </p>
-                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 ml-2">
-                  {item.status === "completed" && item.saved_analysis_id && (
-                    <>
-                      <button
-                        onClick={() => handleViewResult(item)}
-                        className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
-                      >
-                        View
-                      </button>
-                      <Link
-                        href={`/analyzed-jobs/${item.saved_analysis_id}`}
-                        className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
-                      >
-                        Open
-                      </Link>
-                    </>
+                  {item.status === "failed" && (
+                    <button
+                      onClick={() => handleRetryQueueItem(item.id)}
+                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                      title="Retry"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
                   )}
                   {item.status !== "processing" && (
                     <button
@@ -409,275 +426,6 @@ export default function AnalyzerPage() {
             <p className="text-xs text-gray-500 mt-2">
               {pendingCount} job{pendingCount !== 1 ? "s" : ""} waiting in queue
             </p>
-          )}
-        </div>
-      )}
-
-      {loadingAnalysis && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center mb-6">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
-          <p className="text-blue-800 font-medium">Loading analysis...</p>
-        </div>
-      )}
-
-      {result && (
-        <div className="space-y-6">
-          {/* Saved confirmation banner */}
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Check className="w-5 h-5 text-green-600" />
-              <span className="text-green-800">
-                Viewing analysis for <strong>{result.job_title}</strong> at{" "}
-                <strong>{result.company_name}</strong>
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Link
-                href={`/analyzed-jobs/${result.id}`}
-                className="text-sm text-green-700 hover:text-green-900 underline"
-              >
-                Open full page
-              </Link>
-              <button
-                onClick={() => setSelectedAnalysis(null)}
-                className="text-sm text-gray-500 hover:text-gray-700 ml-2"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-
-          {/* Job Summary - Always shown at the top */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold mb-4">Job Summary</h2>
-            <div className="space-y-2">
-              <p>
-                <span className="font-medium">Title:</span> {result.job_title}
-              </p>
-              <p>
-                <span className="font-medium">Company:</span> {result.company_name}
-              </p>
-              {result.key_requirements && result.key_requirements.length > 0 && (
-                <div>
-                  <span className="font-medium">Key Requirements:</span>
-                  <ul className="list-disc list-inside mt-1 text-gray-600">
-                    {result.key_requirements.map((req, i) => (
-                      <li key={i}>{req}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Eligibility Status - Show rejection banner if not eligible */}
-          {result.eligibility_status === "not_eligible" && (
-            <div className="bg-red-50 border border-red-300 rounded-lg p-6">
-              <div className="flex items-start gap-3">
-                <XCircle className="w-6 h-6 text-red-600 mt-0.5 flex-shrink-0" />
-                <div className="flex-1">
-                  <h2 className="text-lg font-semibold text-red-800 mb-2">
-                    Job Not Eligible
-                  </h2>
-                  <p className="text-red-700 mb-4">
-                    This job doesn&apos;t meet your requirements. Here&apos;s why:
-                  </p>
-                  <ul className="space-y-2">
-                    {result.eligibility_reasons.map((reason, i) => (
-                      <li
-                        key={i}
-                        className={`flex items-start gap-2 ${
-                          reason.startsWith("FAIL")
-                            ? "text-red-700"
-                            : "text-green-700"
-                        }`}
-                      >
-                        {reason.startsWith("FAIL") ? (
-                          <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                        ) : (
-                          <Check className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                        )}
-                        <span>{reason}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-              <p className="text-sm text-gray-500 mt-4">
-                Processed in {(result.processing_time_ms / 1000).toFixed(1)}s
-              </p>
-            </div>
-          )}
-
-          {/* Partially Eligible Warning */}
-          {result.eligibility_status === "partially_eligible" && (
-            <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-                <div>
-                  <h3 className="font-medium text-yellow-800">Partially Eligible</h3>
-                  <ul className="mt-2 space-y-1 text-sm text-yellow-700">
-                    {result.eligibility_reasons.map((reason, i) => (
-                      <li key={i}>{reason}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Matching Score - Only show if not rejected */}
-          {result.eligibility_status !== "not_eligible" && (
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Match Score</h2>
-                <span className="text-sm text-gray-500">
-                  Processed in {(result.processing_time_ms / 1000).toFixed(1)}s
-                </span>
-              </div>
-              <div className="flex items-center gap-4">
-                <div
-                  className={`text-4xl font-bold px-6 py-3 rounded-lg border ${getScoreColor(result.matching_score)}`}
-                >
-                  {result.matching_score}%
-                </div>
-                <p className="text-gray-600 flex-1">{result.matching_explanation}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Only show detailed analysis if not rejected */}
-          {result.eligibility_status !== "not_eligible" && (
-            <>
-              {/* Resume Suggestions */}
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">
-                    Resume Suggestions
-                    {result.resume_suggestions.length > 0 && (
-                      <span className="ml-2 text-sm font-normal text-gray-500">
-                        ({result.resume_suggestions.length} suggestions in{" "}
-                        {Object.keys(groupedSuggestions).length} sections)
-                      </span>
-                    )}
-                  </h2>
-                  {Object.keys(groupedSuggestions).length > 0 && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={expandAllSections}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        Expand all
-                      </button>
-                      <span className="text-gray-300">|</span>
-                      <button
-                        onClick={collapseAllSections}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        Collapse all
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {Object.entries(groupedSuggestions).map(([section, suggestions]) => (
-                    <div
-                      key={section}
-                      className="border border-gray-200 rounded-lg overflow-hidden"
-                    >
-                      <button
-                        onClick={() => toggleSection(section)}
-                        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          {expandedSections.has(section) ? (
-                            <ChevronDown className="w-4 h-4 text-gray-500" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4 text-gray-500" />
-                          )}
-                          <span className="font-medium text-gray-800">{section}</span>
-                          <span className="text-sm text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
-                            {suggestions.length}
-                          </span>
-                        </div>
-                      </button>
-                      {expandedSections.has(section) && (
-                        <div className="px-4 py-3 space-y-3 border-t border-gray-200">
-                          {suggestions.map((suggestion, i) => (
-                            <div key={i} className="border-l-4 border-blue-500 pl-4">
-                              <p className="text-gray-800">{suggestion.suggestion}</p>
-                              <p className="text-sm text-gray-500 mt-1">
-                                {suggestion.reason}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {result.resume_suggestions.length === 0 && (
-                    <p className="text-gray-500">
-                      No suggestions - your resume looks good for this role!
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* ATS Keywords */}
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <h2 className="text-lg font-semibold mb-4">ATS Keywords</h2>
-                <div className="flex flex-wrap gap-2">
-                  {result.ats_keywords.map((keyword, i) => (
-                    <span
-                      key={i}
-                      className={`px-3 py-1 rounded-full text-sm flex items-center gap-2 ${
-                        keyword.found_in_resume
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-700"
-                      }`}
-                    >
-                      {keyword.found_in_resume && <Check className="w-3 h-3" />}
-                      {keyword.keyword}
-                      <span
-                        className={`text-xs px-1.5 py-0.5 rounded ${getImportanceColor(keyword.importance)}`}
-                      >
-                        {keyword.importance}
-                      </span>
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-4 text-sm text-gray-500">
-                  <Check className="w-4 h-4 inline mr-1 text-green-600" />= Found in your
-                  resume
-                </div>
-              </div>
-
-              {/* Cover Letter */}
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Generated Cover Letter</h2>
-                  <button
-                    onClick={copyToClipboard}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="w-4 h-4 text-green-600" />
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        Copy
-                      </>
-                    )}
-                  </button>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4 whitespace-pre-wrap font-serif text-gray-800 leading-relaxed">
-                  {result.cover_letter}
-                </div>
-              </div>
-            </>
           )}
         </div>
       )}
